@@ -1,3 +1,6 @@
 node_modules
 dist
 .DS_Store
+
+# エディタ/ツールのローカル設定(絶対パスが入るため公開しない)
+.claude

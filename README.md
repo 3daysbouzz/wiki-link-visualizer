@@ -2,6 +2,8 @@
 
 Wikipedia記事間のリンク関係を3Dグラフとして可視化するプロトタイプです。
 
+**デモ: https://3daysbouzz.github.io/wiki-link-visualizer/**
+
 ## セットアップ
 
 ```bash
@@ -9,7 +11,9 @@ npm install
 npm run dev
 ```
 
-ブラウザで `http://localhost:5173` を開いてください。
+起動するとターミナルに URL が表示されるので、それを開いてください
+(`http://localhost:5173/wiki-link-visualizer/`)。GitHub Pages の配信階層に
+合わせるため、開発時も URL にリポジトリ名が付きます(`vite.config.js` の `base`)。
 
 `npm` が見つからない場合は Node.js 自体が未インストールです。
 [nodejs.org](https://nodejs.org/) からLTS版を入れて、ターミナルを開き直してください。
@@ -89,6 +93,19 @@ window.fetch = (u, o) =>
   String(u).includes('api.php') && !String(u).includes('opensearch')
     ? Promise.resolve(new Response('Too Many Requests', { status: 429 }))
     : realFetch(u, o)
+```
+
+## 公開(GitHub Pages)
+
+`main` に push すると GitHub Actions が「依存のインストール → テスト → ビルド → 公開」
+を自動で行います(`.github/workflows/deploy.yml`)。テストが落ちるとそこで止まるので、
+壊れた状態は公開されません。
+
+ビルド結果を手元で確認するには以下を実行します(本番と同じパス構成で配信されます)。
+
+```bash
+npm run build
+npm run preview
 ```
 
 ## 技術構成
