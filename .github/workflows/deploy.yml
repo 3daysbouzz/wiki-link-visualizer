@@ -34,10 +34,15 @@ jobs:
       - name: ソースを取得
         uses: actions/checkout@v4
 
+      # Node 24 を使う理由:
+      #   テストは src/config/presets.ts を直接 import する。
+      #   .ts を素の node で読むには型除去(type stripping)が必要で、
+      #   これは Node 22.18 以降の機能。Node 20 だとここで落ちる(実際に失敗した)。
+      #   開発機も v24 系なので揃えてある。
       - name: Node.js を用意
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       # package-lock.json のとおりに入れる(npm install と違いバージョンがぶれない)

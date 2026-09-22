@@ -18,6 +18,10 @@ npm run dev
 `npm` が見つからない場合は Node.js 自体が未インストールです。
 [nodejs.org](https://nodejs.org/) からLTS版を入れて、ターミナルを開き直してください。
 
+**Node.js は 22.18 以降が必要です**(推奨 24)。テストが TypeScript のファイルを
+直接読み込むため、型除去(type stripping)に対応したバージョンが要ります。
+`node --version` で確認できます。
+
 ## 使い方
 
 1. 上部の検索欄に記事名(例: `初音ミク`)を入力する。候補が出るので ↑↓ で選んで Enter
