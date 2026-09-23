@@ -3,7 +3,6 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { seededRandom } from '../utils/prng.js'
 import {
-  VISIBLE_LABELS,
   LABEL_CANDIDATES,
   VIEWS_SCALE_MIN,
   VIEWS_SCALE_MAX,
@@ -20,9 +19,7 @@ import {
   RING_OPACITY_MAX,
   RING_OPACITY_MIN,
   HIT_RADIUS_PX,
-  EDGE_PRIMARY_OPACITY,
   EDGE_HOVER_OPACITY,
-  EDGE_WEAK_OPACITY,
   EDGE_DASH_SIZE,
   EDGE_GAP_SIZE,
   HOVER_DIM_RATIO,
@@ -50,12 +47,17 @@ import {
   TRAVEL_MS,
   TRAVEL_EASE,
   TRAVEL_DIM_OPACITY,
-  FOLLOW_LERP,
   ZOOM_STEP,
   ZOOM_TWEEN_MS,
   MOBILE_BREAKPOINT_PX,
   MOBILE_MAX_PIXEL_RATIO,
+  MAX_SPEED,
+  ALPHA_MIN,
+  SIM_STEPS_PER_SEC,
+  SIM_MAX_STEPS_PER_FRAME,
+  SPAWN_SPREAD,
 } from '../constants.js'
+import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 
 /**
  * Three.js本体のみで実装した3Dグラフ描画コンポーネント。
@@ -80,22 +82,26 @@ import {
 
 const BACKGROUND = 0x000000
 
-// 力学シミュレーションのパラメータ
-const REPULSION = 2600
-const REPULSION_RANGE = 320
-const SPRING_K = 0.012
-const SPRING_LENGTH = 55
-const CENTER_K = 0.006
-const DAMPING = 0.86
-const MAX_SPEED = 14
-const ALPHA_DECAY = 0.99
-const ALPHA_MIN = 0.015
-// シミュレーションは固定の時間刻みで進める(1秒あたりのステップ数と、1フレームで進める最大数)。
-// フレームレートに依存させると、同じ種でも環境ごとに配置が変わってしまう
-const SIM_STEPS_PER_SEC = 60
-const SIM_MAX_STEPS_PER_FRAME = 4
-// 新規ノードの初期配置をばらまく範囲(ワールド座標)
-const SPAWN_SPREAD = 120
+// 力学シミュレーションと見た目のパラメータは VizConfig から受け取る(SPEC 12.2)。
+// 値そのものと調整の目安は src/constants.js / src/config/presets.ts にある。
+// config プロパティが渡らない場合に備えて current プリセットを既定値にする
+const FALLBACK_CONFIG = PRESETS.current
+
+/** config から力学に使う値だけを取り出す */
+function layoutOf(config) {
+  const c = config || FALLBACK_CONFIG
+  const out = {}
+  for (const k of LAYOUT_KEYS) out[k] = c[k] ?? FALLBACK_CONFIG[k]
+  return out
+}
+
+/** config から描画に使う値だけを取り出す */
+function visualOf(config) {
+  const c = config || FALLBACK_CONFIG
+  const out = {}
+  for (const k of VISUAL_KEYS) out[k] = c[k] ?? FALLBACK_CONFIG[k]
+  return out
+}
 
 // ラベルのテクスチャを描く倍率(12px の文字をそのまま描くとぼやけるので大きく描いて縮める)
 const LABEL_TEXTURE_SCALE = 3
@@ -205,7 +211,7 @@ function displayPosition(ctx, node, out) {
 }
 
 const Graph3D = forwardRef(function Graph3D(
-  { graphData, onNodeClick, onNodeHover, currentId, loadingId, packetIds, seed = 1 },
+  { graphData, onNodeClick, onNodeHover, currentId, loadingId, packetIds, seed = 1, config },
   ref
 ) {
   const containerRef = useRef(null)
@@ -430,6 +436,9 @@ const Graph3D = forwardRef(function Graph3D(
       // 同一座標のずらしには seed から作った乱数列を使う
       seed,
       jitter: seededRandom(seed, 'jitter'),
+      // 力学・見た目のパラメータ(VizConfig 由来)。leva や URL で変わると差し替える
+      layout: layoutOf(config),
+      visual: visualOf(config),
       tween: null,
       lastLabelUpdate: 0,
       lastFrame: performance.now(),
@@ -681,6 +690,38 @@ const Graph3D = forwardRef(function Graph3D(
     }
     ctx.alpha = 1
   }, [seed])
+
+  // ======================================================================
+  // 3b. VizConfig の変更を反映する
+  //
+  // 種の変更(上)は「配置の作り直し」= 初期位置に戻して最初からやり直す。
+  // 力学パラメータの変更はそれとは区別し、**今の位置を残したまま**
+  // alpha を 1 に戻して動きを再開させる。
+  // こうするとパラメータを動かしたときに、今の形からどう変形するかが見えて
+  // 比較しやすい(作り直すと毎回ゼロからの再生になって差が分かりにくい)。
+  //
+  // 依存配列にはオブジェクトではなく値を連結した文字列を渡す。
+  // config は毎回新しいオブジェクトなので、そのままだと中身が同じでも毎回発火する
+  // ======================================================================
+  const layoutSignature = LAYOUT_KEYS.map((k) => (config ? config[k] : '')).join(',')
+  useEffect(() => {
+    const ctx = ctxRef.current
+    if (!ctx) return
+    ctx.layout = layoutOf(config)
+    ctx.alpha = 1 // 位置はそのまま。止まっていた計算を動かし直す
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutSignature])
+
+  // 見た目だけの値。配置には触れず、線の明るさとラベルの出し方を作り直す
+  const visualSignature = VISUAL_KEYS.map((k) => (config ? config[k] : '')).join(',')
+  useEffect(() => {
+    const ctx = ctxRef.current
+    if (!ctx) return
+    ctx.visual = visualOf(config)
+    applyHighlight(ctx)
+    updateLabelVisibility(ctx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visualSignature])
 
   // ======================================================================
   // 4. App側から呼べる命令的API
@@ -941,7 +982,9 @@ function syncGraph(ctx, graphData, currentId) {
 
   for (const link of ctx.links) {
     link.primary = link.source === currentId || link.target === currentId
-    link.bright = link.primary ? EDGE_PRIMARY_OPACITY : EDGE_WEAK_OPACITY
+    link.bright = link.primary
+      ? ctx.visual.edgePrimaryOpacity
+      : ctx.visual.edgeWeakOpacity
   }
   ctx.linkByKey = new Map()
   for (const link of ctx.links) {
@@ -1016,7 +1059,9 @@ function applyHighlight(ctx) {
   }
 
   for (const link of ctx.links) {
-    const base = link.primary ? EDGE_PRIMARY_OPACITY : EDGE_WEAK_OPACITY
+    const base = link.primary
+      ? ctx.visual.edgePrimaryOpacity
+      : ctx.visual.edgeWeakOpacity
     let bright = base
     if (hoveredId) {
       if (link.source === hoveredId || link.target === hoveredId) {
@@ -1220,7 +1265,7 @@ function updatePackets(ctx, t) {
     else if (phase < 2 / 3) opacity = 1
     else opacity = (1 - phase) * 3
     // ホバー/遷移で線が減光しているときはパケットも一緒に落とす
-    const linkFactor = Math.min(link.bright / EDGE_PRIMARY_OPACITY, 1)
+    const linkFactor = Math.min(link.bright / (ctx.visual.edgePrimaryOpacity || 1), 1)
     sprite.material.opacity = opacity * linkFactor
     sprite.visible = true
   }
@@ -1279,7 +1324,7 @@ function updateLabelVisibility(ctx) {
   let shown = 0
 
   for (const node of considered) {
-    if (shown >= VISIBLE_LABELS) break
+    if (shown >= ctx.visual.visibleLabels) break
 
     displayPosition(ctx, node, _v1)
     _v1.project(camera) // 以降 _v1 はNDC座標
@@ -1331,6 +1376,17 @@ function stepSimulation(ctx) {
   const n = nodes.length
   if (n === 0) return
 
+  // 毎ステップ config を読みに行かず、最初に取り出しておく(内側のループが O(n^2) のため)
+  const {
+    repulsion,
+    repulsionRange,
+    springK,
+    springLength,
+    centerK,
+    damping,
+    alphaDecay,
+  } = ctx.layout
+
   // --- ノード間の反発(O(n^2)。数百ノード程度までを想定) ---
   for (let i = 0; i < n; i++) {
     const a = nodes[i]
@@ -1341,7 +1397,7 @@ function stepSimulation(ctx) {
       let dz = a.z - b.z
       let distSq = dx * dx + dy * dy + dz * dz
 
-      if (distSq > REPULSION_RANGE * REPULSION_RANGE) continue
+      if (distSq > repulsionRange * repulsionRange) continue
       if (distSq < 1) {
         // ほぼ同一座標だと力が発散するので微小にずらす
         dx = ctx.jitter() - 0.5
@@ -1351,7 +1407,7 @@ function stepSimulation(ctx) {
       }
 
       const dist = Math.sqrt(distSq)
-      const force = REPULSION / distSq
+      const force = repulsion / distSq
       const fx = (dx / dist) * force
       const fy = (dy / dist) * force
       const fz = (dz / dist) * force
@@ -1375,7 +1431,7 @@ function stepSimulation(ctx) {
     const dy = b.y - a.y
     const dz = b.z - a.z
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001
-    const force = (dist - SPRING_LENGTH) * SPRING_K
+    const force = (dist - springLength) * springK
     const fx = (dx / dist) * force
     const fy = (dy / dist) * force
     const fz = (dz / dist) * force
@@ -1390,13 +1446,13 @@ function stepSimulation(ctx) {
 
   // --- 中心への引力 + 速度更新 ---
   for (const node of nodes) {
-    node.vx -= node.x * CENTER_K
-    node.vy -= node.y * CENTER_K
-    node.vz -= node.z * CENTER_K
+    node.vx -= node.x * centerK
+    node.vy -= node.y * centerK
+    node.vz -= node.z * centerK
 
-    node.vx *= DAMPING
-    node.vy *= DAMPING
-    node.vz *= DAMPING
+    node.vx *= damping
+    node.vy *= damping
+    node.vz *= damping
 
     const speed = Math.sqrt(
       node.vx * node.vx + node.vy * node.vy + node.vz * node.vz
@@ -1413,7 +1469,7 @@ function stepSimulation(ctx) {
     node.z += node.vz * ctx.alpha
   }
 
-  ctx.alpha *= ALPHA_DECAY
+  ctx.alpha *= alphaDecay
 }
 
 // ==========================================================================
@@ -1432,7 +1488,7 @@ function updateFollow(ctx) {
   }
 
   _v1.set(node.x, node.y, node.z)
-  _v2.copy(_v1).sub(ctx.controls.target).multiplyScalar(FOLLOW_LERP)
+  _v2.copy(_v1).sub(ctx.controls.target).multiplyScalar(ctx.visual.followLerp)
   ctx.controls.target.add(_v2)
   ctx.camera.position.add(_v2)
 }

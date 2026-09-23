@@ -36,6 +36,9 @@ Wikipedia記事間のリンクを3Dグラフで可視化するWebアプリ。個
 
 **表示パラメータは `src/config/presets.ts` の VizConfig で持つ。** `current` プリセットは
 回帰確認用なので削除しない。URL クエリ(`?preset=&nodeLimit=…`)で上書きできる。
+**力学レイアウトの値(`repulsion` `springK` など)も VizConfig にある。**
+既定値は `constants.js`、範囲は `presets.ts` の `RANGES`、この2つと `current` プリセットは
+必ず揃える(テストで検査している)。詳細は SPEC 12.2。
 
 ## コマンド
 
@@ -59,11 +62,12 @@ src/
 │   └── summary.js            記事プレビュー(REST summary API)
 └── components/
     ├── Graph3D.jsx           3D描画。ハイライト・ラベル・グリッド・パケット・遷移・カメラ追従
+    │                          力学と見た目の値は VizConfig から受け取る(直書きしない)
     ├── TopBar.jsx            ロゴ・検索欄(候補付き)・統計値・リセット
     ├── Sidebar.jsx           右サイドバー(記事名・メタ・抜粋・隣接記事)
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
-    └── DebugPanel.jsx        leva パネル(?debug=1)
+    └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual のフォルダに分ける
 tests/                        node:test のユニットテスト(API のエラー処理・抽選・URL 読み取り)
 ```
 

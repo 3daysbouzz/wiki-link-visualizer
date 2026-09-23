@@ -258,6 +258,12 @@ morelike と一致するリンク先が `GUARANTEED_TOP` 件に満たない場�
 | `TRAIL_KEEP` | 2 | 子ノードを残す訪問記事の件数(7章) |
 | `MAX_NODES_WARN` | 300 | この数を超えたら注意を表示 |
 | `FETCH_TIMEOUT_MS` | 15000 | 1リクエストを諦めるまでの時間(3.6d) |
+| `REPULSION` / `REPULSION_RANGE` | 2600 / 320 | 反発の強さと計算する距離の上限(12.2) |
+| `SPRING_K` / `SPRING_LENGTH` | 0.012 / 55 | リンクのバネの硬さと自然長(12.2) |
+| `CENTER_K` / `DAMPING` / `ALPHA_DECAY` | 0.006 / 0.86 / 0.99 | 中心への引力・減衰・収束の速さ(12.2) |
+| `MAX_SPEED` / `ALPHA_MIN` | 14 / 0.015 | 発散の歯止めと収束の判定。VizConfig には出さない |
+| `SIM_STEPS_PER_SEC` / `SIM_MAX_STEPS_PER_FRAME` | 60 / 4 | 固定刻みシミュレーション(12.1)。VizConfig には出さない |
+| `SPAWN_SPREAD` | 120 | 新規ノードの初期配置の広がり。VizConfig には出さない |
 | `MOBILE_BREAKPOINT_PX` | 900 | この幅未満をモバイル用レイアウトとみなす。`App.css` のメディアクエリと揃える(4章) |
 | `MOBILE_MAX_PIXEL_RATIO` | 1.5 | モバイルでの描画解像度(devicePixelRatio)の上限(8章) |
 
@@ -650,6 +656,19 @@ UI の調整は試行回数が多い。「改善したのか、配置が変わ�
 同じ (開始記事, 経路, 設定) なら、同じステップ数を進めた配置は完全に一致する。
 `?debug=1` のとき `window.__viz.step(600)` で同期的に進め、`window.__viz.positions()` で照合できる。
 
+`window.__viz` で使えるもの:
+
+| 呼び方 | 内容 |
+|---|---|
+| `positions()` | 全ノードの座標と `__sim`(進めたステップ数・alpha) |
+| `step(n)` | レイアウト計算を同期的に n ステップ進める |
+| `config()` | 今の VizConfig |
+| `trail()` | 今の経路 |
+| `set({ repulsion: 9000 })` | 設定を変える。leva を触らずに挙動を確かめたいとき |
+
+なお**ブラウザのタブが非表示のときは `requestAnimationFrame` が止まる**ので、
+放置しても収束しない。照合するときは `step(n)` で明示的に進めること。
+
 ### 12.2 VizConfig とプリセット(`src/config/presets.ts`)
 
 | 項目 | 意味 | 効く時期 |
@@ -660,8 +679,37 @@ UI の調整は試行回数が多い。「改善したのか、配置が変わ�
 | `colorMode` | `mono` / `category` | `category` は Phase 3 |
 | `trailEnabled` | 軌跡(訪問済みとその子)を残すか | 即時 |
 | `seed` | 乱数の種 | 配置は即時作り直し。抽選は次の展開から |
+| **layout** | 力学レイアウト。下記7項目 | 即時(配置は作り直さず計算を再開) |
+| `repulsion` | ノード同士が押し合う強さ。大きいほど広がる | 即時 |
+| `repulsionRange` | 反発を計算する距離の上限 | 即時 |
+| `springK` | リンクのバネの硬さ。大きすぎると振動する | 即時 |
+| `springLength` | バネの自然長(隣接ノードの狙いの距離) | 即時 |
+| `centerK` | 原点へ引き戻す力。0 で際限なく広がる | 即時 |
+| `damping` | 速度の減衰。小さいほど早く止まる | 即時 |
+| `alphaDecay` | alpha の減衰率。小さいほど早く収束する | 即時 |
+| **visual** | 見た目。下記4項目。配置には影響しない | 即時 |
+| `visibleLabels` | 同時に表示するラベルの最大数 | 即時 |
+| `edgePrimaryOpacity` | 実線(起点↔一次)の不透明度 | 即時 |
+| `edgeWeakOpacity` | 破線(弱いエッジ)の不透明度 | 即時 |
+| `followLerp` | カメラ追従の追いつき速度 | 即時 |
+
+**`seed` の変更と `layout` の変更は区別する。**
+`seed` は初期位置からの作り直し(velocity も 0 に戻す)。
+`layout` は**今の位置を保ったまま** `alpha` を 1 に戻して計算を再開する。
+こうするとパラメータを動かしたときに今の形からどう変形するかが見え、比較しやすい。
+
+各項目の最小値・最大値は `presets.ts` の `RANGES` に定義し、
+leva のスライダーの端と URL の丸めに同じ値を使う(パネルと URL でずれないようにするため)。
+上限・下限は「この外に出すと比較にならない(発散する・描画が壊れる)」ところに置いている。
+理由は `presets.ts` のコメントを正とする。
+
+`MAX_SPEED` / `ALPHA_MIN` / `SIM_STEPS_PER_SEC` / `SIM_MAX_STEPS_PER_FRAME` / `SPAWN_SPREAD` は
+`constants.js` に置くだけで VizConfig には出さない。配置の好みではなく
+安定性(発散の歯止め)やフレーム処理に効く値で、触ると環境ごとに結果が変わるため。
 
 プリセット: `current`(今の見た目。回帰確認用に**削除しない**)、`mesh`(ネットワーク向け。Phase 1 以降で本領)。
+**`current` の値は `constants.js` の既定値と完全に一致させること。** ずれると比較の土台が壊れる
+(`tests/urlState.test.js` で一致を検査している)。
 
 ### 12.3 URL クエリ(`src/config/urlState.js`)
 

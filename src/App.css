@@ -597,7 +597,12 @@ button.breadcrumb-item:disabled {
   }
 }
 
-/* デバッグパネル(leva)。トップバーに重ならないよう下げる */
-#leva__root > div:first-child {
-  top: 72px !important;
+/* デバッグパネル(leva)。トップバーに重ならないよう下げる。
+   <Leva /> はその場に描画される(body 直下のポータルではない)ので、
+   包んだ .debug-panel の子を指定する。
+   以前は #leva__root を指していたがその id は存在せず、指定が効いていなかった */
+.debug-panel > div {
+  top: calc(var(--topbar-height) + 8px) !important;
+  max-height: calc(100vh - var(--topbar-height) - 24px) !important;
+  overflow-y: auto !important;
 }

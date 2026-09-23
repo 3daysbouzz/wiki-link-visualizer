@@ -180,3 +180,47 @@ export const MOBILE_MAX_PIXEL_RATIO = 1.5
 // その未展開の子ノードを画面に残す)。
 // 訪問した記事そのもの(軌跡)は、この値に関わらず消さない。
 export const TRAIL_KEEP = 2
+
+// --- 力学シミュレーション (SPEC 8章・12.2) --------------------------------
+// もともと Graph3D.jsx の冒頭に直書きしていたが、「数値は constants.js に集める」
+// 方針に合わせてここへ移した。
+//
+// このうち repulsion / repulsionRange / springK / springLength / centerK /
+// damping / alphaDecay は VizConfig(presets.ts)にも項目があり、
+// URL と leva から上書きできる。**ここの値は current プリセットの既定値**で、
+// 実際に計算へ渡るのは config の値。両方を変えるときは必ず揃えること。
+//
+// 残り(MAX_SPEED / ALPHA_MIN / SIM_STEPS_*/ SPAWN_SPREAD)は公開していない。
+// 数値を動かしても「配置の好み」ではなく安定性やフレーム処理に効く値で、
+// 触ると発散したり環境ごとに結果が変わったりするため。
+
+// ノード同士が押し合う強さ。大きいほど全体が広がる。
+// 距離の2乗で割るので、近いノードほど強く効く
+export const REPULSION = 2600
+// 反発を計算する距離の上限(ワールド座標)。これより遠い組は総当たりから外す。
+// 小さくすると速くなるが、離れた塊同士が重なりやすくなる
+export const REPULSION_RANGE = 320
+// リンクのバネの硬さ。大きいほど繋がったノードが素早く引き寄せられ、
+// 大きすぎると振動する
+export const SPRING_K = 0.012
+// バネの自然長(ワールド座標)。隣接ノードの狙いの距離
+export const SPRING_LENGTH = 55
+// 原点へ引き戻す力。0 にすると全体が際限なく広がる
+export const CENTER_K = 0.006
+// 速度の減衰(0〜1)。小さいほど早く止まり、1 に近いほど揺れが長引く
+export const DAMPING = 0.86
+// 1ステップごとの alpha の減衰率。小さくすると早く収束する
+export const ALPHA_DECAY = 0.99
+
+// --- 以下は VizConfig に出さない(安定性・再現性に関わるため) ---
+// 1ステップで動ける速度の上限。発散(ノードが飛んでいく)の歯止め
+export const MAX_SPEED = 14
+// alpha がこれを下回ったら計算を止める(収束とみなす)
+export const ALPHA_MIN = 0.015
+// シミュレーションは固定の時間刻みで進める(1秒あたりのステップ数と、1フレームで進める最大数)。
+// フレームレートに依存させると、同じ種でも環境ごとに配置が変わってしまう
+export const SIM_STEPS_PER_SEC = 60
+export const SIM_MAX_STEPS_PER_FRAME = 4
+// 新規ノードの初期配置をばらまく範囲(ワールド座標)。
+// (seed, 記事名) から決まるので、同じ種なら同じ場所に生まれる
+export const SPAWN_SPREAD = 120

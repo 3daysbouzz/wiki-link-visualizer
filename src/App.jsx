@@ -328,6 +328,10 @@ export default function App() {
     (patch) => applyConfig(coerceConfig(configRef.current, { ...configRef.current, ...patch })),
     [applyConfig]
   )
+  // window.__viz から最新のハンドラを呼べるようにしておく
+  // (window.__viz は起動時に一度だけ作るので、関数を直接持たせると古いものを掴む)
+  const configChangeRef = useRef(handleConfigChange)
+  configChangeRef.current = handleConfigChange
 
   const handlePresetChange = useCallback(
     (name) => {
@@ -367,6 +371,12 @@ export default function App() {
         step: (n) => graphRef.current?.stepLayout(n),
         config: () => configRef.current,
         trail: () => trailRef.current,
+        // 設定をその場で変える。leva を触らずに挙動を確かめたいときに使う
+        // 例: window.__viz.set({ repulsion: 9000 })
+        set: (patch) => {
+          configChangeRef.current(patch)
+          return configRef.current
+        },
       }
     }
     const { start, path } = initialUrlState
@@ -535,6 +545,7 @@ export default function App() {
             loadingId={loadingId}
             packetIds={packetIds}
             seed={config.seed}
+            config={config}
           />
 
           {status && (

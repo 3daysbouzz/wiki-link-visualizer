@@ -2,6 +2,7 @@
  * URL クエリと状態の対応。
  *
  *   ?preset=mesh&nodeLimit=64      … 表示パラメータ(プリセット名 + 個別上書き)
+ *   ?repulsion=4000&springK=0.02   … 力学パラメータも同じしくみで上書きできる(12.2)
  *   ?start=流体力学&path=マグネシウム,ウラン … 探索経路(開始記事と、そこから辿った記事)
  *   ?debug=1                       … デバッグパネルを出す
  *
@@ -9,8 +10,15 @@
  * 経路は歩くたびに replaceState で書き換える(履歴は汚さない)。
  */
 
-import { PRESETS, DEFAULT_PRESET, coerceConfig } from './presets.ts'
+import {
+  PRESETS,
+  DEFAULT_PRESET,
+  coerceConfig,
+  LAYOUT_KEYS,
+  VISUAL_KEYS,
+} from './presets.ts'
 
+// URL に出す VizConfig の項目。ここに無い項目は URL から読まないし書かない
 const CONFIG_KEYS = [
   'nodeLimit',
   'neighborLimit',
@@ -18,6 +26,8 @@ const CONFIG_KEYS = [
   'colorMode',
   'trailEnabled',
   'seed',
+  ...LAYOUT_KEYS,
+  ...VISUAL_KEYS,
 ]
 
 /** URL から { presetName, config, overrides, start, path, debug } を読む */

@@ -6,7 +6,26 @@ import { test, describe, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { readUrlState } from '../src/config/urlState.js'
-import { coerceConfig, PRESETS } from '../src/config/presets.ts'
+import {
+  coerceConfig,
+  PRESETS,
+  RANGES,
+  LAYOUT_KEYS,
+  VISUAL_KEYS,
+} from '../src/config/presets.ts'
+import {
+  REPULSION,
+  REPULSION_RANGE,
+  SPRING_K,
+  SPRING_LENGTH,
+  CENTER_K,
+  DAMPING,
+  ALPHA_DECAY,
+  VISIBLE_LABELS,
+  EDGE_PRIMARY_OPACITY,
+  EDGE_WEAK_OPACITY,
+  FOLLOW_LERP,
+} from '../src/constants.js'
 
 beforeEach(() => {
   console.warn = () => {}
@@ -57,5 +76,138 @@ describe('coerceConfig', () => {
     assert.equal(coerceConfig(PRESETS.current, { seed: '12.7' }).seed, 12)
     assert.equal(coerceConfig(PRESETS.current, { seed: 12.7 }).seed, 13)
     assert.equal(coerceConfig(PRESETS.current, { seed: 99999999999 }).seed, 2147483647)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 力学・見た目パラメータ(VizConfig の数値項目)
+// 小数を受けること・範囲外を丸めること・不正値で既定に戻ることを確かめる
+// ---------------------------------------------------------------------------
+
+describe('coerceConfig: 小数のパラメータ', () => {
+  const base = PRESETS.current
+
+  test('小数がそのまま通る(parseInt で 0 に潰れない)', () => {
+    const c = coerceConfig(base, { springK: '0.025', centerK: 0.018, alphaDecay: '0.995' })
+    assert.equal(c.springK, 0.025)
+    assert.equal(c.centerK, 0.018)
+    assert.equal(c.alphaDecay, 0.995)
+  })
+
+  test('URL から来た文字列も数値になる', () => {
+    const c = coerceConfig(base, { repulsion: '8000', springLength: '90' })
+    assert.equal(c.repulsion, 8000)
+    assert.equal(c.springLength, 90)
+  })
+
+  test('範囲外は端に丸める', () => {
+    const over = coerceConfig(base, {
+      repulsion: 999999,
+      springK: 5,
+      damping: 1.5,
+      alphaDecay: 2,
+      edgePrimaryOpacity: 9,
+      followLerp: 100,
+    })
+    assert.equal(over.repulsion, RANGES.repulsion.max)
+    assert.equal(over.springK, RANGES.springK.max)
+    assert.equal(over.damping, RANGES.damping.max)
+    assert.equal(over.alphaDecay, RANGES.alphaDecay.max)
+    assert.equal(over.edgePrimaryOpacity, 1)
+    assert.equal(over.followLerp, 1)
+
+    const under = coerceConfig(base, {
+      repulsion: -500,
+      springK: -1,
+      damping: 0,
+      edgeWeakOpacity: -0.5,
+      followLerp: 0,
+    })
+    assert.equal(under.repulsion, RANGES.repulsion.min)
+    assert.equal(under.springK, RANGES.springK.min)
+    assert.equal(under.damping, RANGES.damping.min)
+    assert.equal(under.edgeWeakOpacity, 0)
+    assert.equal(under.followLerp, RANGES.followLerp.min)
+  })
+
+  test('数値として読めない値は base の値に戻る', () => {
+    const c = coerceConfig(base, {
+      repulsion: 'abc',
+      springK: '',
+      centerK: null,
+      damping: undefined,
+      alphaDecay: {},
+      followLerp: 'NaN',
+    })
+    assert.equal(c.repulsion, base.repulsion)
+    assert.equal(c.springK, base.springK)
+    assert.equal(c.centerK, base.centerK)
+    assert.equal(c.damping, base.damping)
+    assert.equal(c.alphaDecay, base.alphaDecay)
+    assert.equal(c.followLerp, base.followLerp)
+  })
+
+  test('Infinity / NaN も弾いて base に戻す(発散を防ぐ)', () => {
+    const c = coerceConfig(base, {
+      repulsion: Infinity,
+      springK: -Infinity,
+      damping: NaN,
+    })
+    assert.equal(c.repulsion, base.repulsion)
+    assert.equal(c.springK, base.springK)
+    assert.equal(c.damping, base.damping)
+  })
+
+  test('visibleLabels は整数に丸める(ラベル数に小数はない)', () => {
+    assert.equal(coerceConfig(base, { visibleLabels: 12.6 }).visibleLabels, 13)
+    assert.equal(coerceConfig(base, { visibleLabels: -5 }).visibleLabels, 0)
+    assert.equal(coerceConfig(base, { visibleLabels: 9999 }).visibleLabels, RANGES.visibleLabels.max)
+  })
+
+  test('指定しなかった項目は base の値のまま', () => {
+    const c = coerceConfig(base, { repulsion: 3000 })
+    assert.equal(c.repulsion, 3000)
+    for (const k of [...LAYOUT_KEYS, ...VISUAL_KEYS]) {
+      if (k === 'repulsion') continue
+      assert.equal(c[k], base[k], `${k} が変わってしまっている`)
+    }
+  })
+})
+
+describe('current プリセットと constants.js の一致', () => {
+  test('current の力学・見た目の値は constants.js の既定値と同じ(回帰確認の土台)', () => {
+    assert.equal(PRESETS.current.repulsion, REPULSION)
+    assert.equal(PRESETS.current.repulsionRange, REPULSION_RANGE)
+    assert.equal(PRESETS.current.springK, SPRING_K)
+    assert.equal(PRESETS.current.springLength, SPRING_LENGTH)
+    assert.equal(PRESETS.current.centerK, CENTER_K)
+    assert.equal(PRESETS.current.damping, DAMPING)
+    assert.equal(PRESETS.current.alphaDecay, ALPHA_DECAY)
+    assert.equal(PRESETS.current.visibleLabels, VISIBLE_LABELS)
+    assert.equal(PRESETS.current.edgePrimaryOpacity, EDGE_PRIMARY_OPACITY)
+    assert.equal(PRESETS.current.edgeWeakOpacity, EDGE_WEAK_OPACITY)
+    assert.equal(PRESETS.current.followLerp, FOLLOW_LERP)
+  })
+
+  test('既定値はすべて許容範囲の内側にある', () => {
+    for (const [key, range] of Object.entries(RANGES)) {
+      const v = PRESETS.current[key]
+      assert.ok(v >= range.min && v <= range.max, `${key}=${v} が範囲外 (${range.min}〜${range.max})`)
+    }
+  })
+})
+
+describe('URL クエリでの力学パラメータの上書き', () => {
+  test('?repulsion=&springK= が読める', () => {
+    const s = readUrlState('?repulsion=8000&springK=0.03&visibleLabels=40')
+    assert.equal(s.config.repulsion, 8000)
+    assert.equal(s.config.springK, 0.03)
+    assert.equal(s.config.visibleLabels, 40)
+  })
+
+  test('壊れた値は current の値に戻る', () => {
+    const s = readUrlState('?repulsion=xyz&damping=99')
+    assert.equal(s.config.repulsion, PRESETS.current.repulsion)
+    assert.equal(s.config.damping, RANGES.damping.max)
   })
 })
