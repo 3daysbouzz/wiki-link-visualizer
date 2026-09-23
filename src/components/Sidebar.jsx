@@ -6,8 +6,12 @@ function isHttpsUrl(url) {
 }
 
 /**
- * 右サイドバー。常時表示で、ホバー中はそのノード、外れたら現在地の記事を出す。
- * SPEC.md 6.2 に対応。
+ * 右サイドバー。ホバー中はそのノード、外れたら現在地の記事を出す。
+ * SPEC.md 6.2 / 4章 に対応。
+ *
+ * 格納できる。低い横画面(横向きのスマートフォン)ではグラフの上に重なる
+ * ドロワーになり、初期状態は閉じている。それ以外では初期状態は開いていて、
+ * 閉じるとグラフ領域が広がる。開閉状態は保存しない(リロードで初期値に戻る)。
  *
  * - summary / meta が undefined のときは取得中。空パネルにせず記事名だけ先に出す
  * - 取得に失敗しても(null)エラーは出さず、取れなかった項目は「—」にする。
@@ -22,16 +26,47 @@ export default function Sidebar({
   isCurrent,
   onSelect,
   disabled,
+  open,
+  onToggle,
+  overlay,
 }) {
   const dash = '—'
   const fmtNumber = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : dash)
 
+  const className = [
+    'sidebar',
+    open ? 'is-open' : 'is-closed',
+    overlay ? 'is-overlay' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <aside className="sidebar" aria-label="選択中の記事">
+    <aside className={className} aria-label="選択中の記事" aria-hidden={!open}>
       <div className="sidebar-head">
         <div className="sidebar-label">
           {isCurrent || !id ? 'SELECTED NODE' : 'HOVER NODE'}
         </div>
+        <button
+          type="button"
+          className="icon-button sidebar-close"
+          aria-label="記事パネルを閉じる"
+          title="記事パネルを閉じる"
+          onClick={onToggle}
+        >
+          {/* 右向きの山括弧(パネルが右へ引っ込む向き)。絵文字は使わない */}
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
         <h2 className="sidebar-title">
           {id ? (summary && summary.title) || id : '記事を検索してください'}
         </h2>

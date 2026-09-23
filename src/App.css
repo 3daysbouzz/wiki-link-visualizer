@@ -251,6 +251,7 @@ a:hover {
 
 /* -------------------------------------------------------- メインエリア */
 .main {
+  position: relative;
   flex: 1;
   display: flex;
   min-height: 0;
@@ -406,12 +407,43 @@ button.breadcrumb-item:disabled {
   min-height: 0;
 }
 
+/* 閉じたサイドバーは flex から外す。PC・縦画面ではその分グラフが広がる
+   (このリサイズは利用者が押した結果なので許容する。SPEC 4章) */
+.sidebar.is-closed {
+  display: none;
+}
+
 .sidebar-label {
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 2px;
   color: var(--muted-2);
   margin-bottom: 6px;
+}
+
+/* 見出し行の右端に格納ボタンを置く */
+.sidebar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sidebar-head > div:first-child {
+  min-width: 0;
+  flex: 1;
+}
+.sidebar-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+}
+
+/* 閉じているときに出す「開く」ボタン。グラフ側に置く(サイドバーの中だと一緒に消えるため) */
+.sidebar-open {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 16;
 }
 
 .sidebar-title {
@@ -594,6 +626,128 @@ button.breadcrumb-item:disabled {
   }
   .status-line {
     left: 16px;
+  }
+}
+
+/* ------------------------------------------------- 低い横画面(横向きスマホ) */
+/*
+ * 条件は src/utils/layoutMode.js と同じものを書くこと
+ * (CSS のメディアクエリは JS の定数を参照できないので二重に持つ)。
+ * SHORT_LANDSCAPE_MAX_HEIGHT_PX = 500 と対応する。
+ *
+ * 幅の判定(max-width: 899px)より後ろに置いて、そちらを打ち消す。
+ * 844x390 は両方に当たるため、順序で優先度を決めている。
+ */
+@media (orientation: landscape) and (max-height: 500px) {
+  /* ドロワーの幅。画面の半分近くを占めると地図が見えないので 45vw で頭打ちにする */
+  .app {
+    --drawer-width: min(340px, 45vw);
+  }
+
+  /* トップバーは1行に詰める。高さを削った分がそのままグラフの高さになる */
+  .topbar {
+    height: 44px;
+    flex-wrap: nowrap;
+    padding: 0 12px;
+    row-gap: 0;
+  }
+  .topbar-left {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+    gap: 12px;
+    flex-wrap: nowrap;
+  }
+  .logo {
+    font-size: 13px;
+    letter-spacing: 1px;
+  }
+  .search {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+    padding: 5px 10px;
+    font-size: 13px;
+  }
+  .topbar-right {
+    width: auto;
+    gap: 10px;
+  }
+  /* 統計値は場所を取る割に横画面では優先度が低いので隠す */
+  .topbar-right .stat {
+    display: none;
+  }
+
+  /* 縦積み(幅900px未満の指定)を打ち消して、グラフを全面に戻す */
+  .main {
+    flex-direction: row;
+  }
+
+  /* サイドバーはグラフの上に重ねる。flex の外(absolute)に出すので、
+     開閉しても .graph-area の寸法が変わらない = canvas がリサイズされない。
+     これは「ホバーのたびにマップが動く」問題(SPEC 4章)と同じ理由 */
+  .sidebar.is-overlay {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    width: var(--drawer-width);
+    max-height: none;
+    height: auto;
+    flex: none;
+    padding: 12px 14px;
+    gap: 10px;
+    border-left: 1px solid var(--border);
+    border-top: 0;
+    overflow-y: auto;
+  }
+  /* ドロワーはスクロールするので、閉じるボタンのある見出し行は上端に貼り付ける
+     (スクロールして閉じ方が分からなくなるのを防ぐ) */
+  .sidebar.is-overlay .sidebar-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding-bottom: 8px;
+    background: var(--bg);
+    /* 下に流れていく本文との境目を出す(デザイン規則どおり 1px の実線) */
+    border-bottom: 1px solid var(--border-faint);
+  }
+  .sidebar-title {
+    font-size: 17px;
+  }
+  .sidebar-excerpt {
+    font-size: 12px;
+    line-height: 1.6;
+    -webkit-line-clamp: 4;
+  }
+
+  /* ドロワーを開いている間も操作できるよう、右下のボタンをドロワーの左へ逃がす */
+  .layout-short-landscape.is-sidebar-open .zoom-controls {
+    right: calc(var(--drawer-width) + 12px);
+  }
+  .layout-short-landscape.is-sidebar-open .sidebar-open {
+    display: none;
+  }
+  .breadcrumb,
+  .zoom-controls {
+    bottom: 10px;
+  }
+  .breadcrumb {
+    left: 12px;
+    /* 開いているときはドロワーに潜り込まない幅にする */
+    max-width: calc(100% - var(--drawer-width) - 60px);
+  }
+  .layout-short-landscape.is-sidebar-closed .breadcrumb {
+    max-width: calc(100% - 100px);
+  }
+  .status-line {
+    top: 10px;
+    left: 12px;
+  }
+  .sidebar-open {
+    top: 10px;
+    right: 12px;
   }
 }
 

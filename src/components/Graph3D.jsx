@@ -49,7 +49,6 @@ import {
   TRAVEL_DIM_OPACITY,
   ZOOM_STEP,
   ZOOM_TWEEN_MS,
-  MOBILE_BREAKPOINT_PX,
   MOBILE_MAX_PIXEL_RATIO,
   MAX_SPEED,
   ALPHA_MIN,
@@ -58,6 +57,7 @@ import {
   SPAWN_SPREAD,
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
+import { isMobileViewport } from '../utils/layoutMode.js'
 
 /**
  * Three.js本体のみで実装した3Dグラフ描画コンポーネント。
@@ -262,10 +262,10 @@ const Graph3D = forwardRef(function Graph3D(
       container.replaceChildren(message)
       return
     }
-    // 狭幅(モバイル)では描画解像度を抑える。DPR 3 の端末でそのまま描くと
-    // 毎フレームの画素数がデスクトップの数倍になり、動きがもたつく
-    const isMobile = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`).matches
-    const maxPixelRatio = isMobile ? MOBILE_MAX_PIXEL_RATIO : 2
+    // スマートフォン(狭幅 or 低い横画面)では描画解像度を抑える。
+    // DPR 3 の端末でそのまま描くと毎フレームの画素数がデスクトップの数倍になり、動きがもたつく。
+    // 横向きにすると幅が 900px を超える端末があるので、幅だけで判定しない(SPEC 4章・8章)
+    const maxPixelRatio = isMobileViewport() ? MOBILE_MAX_PIXEL_RATIO : 2
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxPixelRatio))
     renderer.setSize(container.clientWidth, container.clientHeight)
     container.appendChild(renderer.domElement)
@@ -460,6 +460,11 @@ const Graph3D = forwardRef(function Graph3D(
       if (!container.clientWidth || !container.clientHeight) return
       camera.aspect = container.clientWidth / container.clientHeight
       camera.updateProjectionMatrix()
+      // 端末を回すと縦横比だけでなく「低い横画面かどうか」も変わるので、
+      // 解像度の上限もここで取り直す
+      renderer.setPixelRatio(
+        Math.min(window.devicePixelRatio, isMobileViewport() ? MOBILE_MAX_PIXEL_RATIO : 2)
+      )
       renderer.setSize(container.clientWidth, container.clientHeight)
       ctx.pxToSprite =
         (2 * Math.tan(((camera.fov * Math.PI) / 180) / 2)) / container.clientHeight

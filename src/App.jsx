@@ -18,6 +18,7 @@ import {
   writeConfigToUrl,
 } from './config/urlState.js'
 import { seededRandom } from './utils/prng.js'
+import { useLayoutMode } from './utils/layoutMode.js'
 import {
   PREVIEW_DELAY_MS,
   MAX_NODES_WARN,
@@ -100,6 +101,23 @@ export default function App() {
   const [loadingId, setLoadingId] = useState(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState(null)
+
+  // 画面の形(SPEC 4章)。'short-landscape' | 'narrow' | 'wide'
+  // 端末を回すと切り替わる
+  const layoutMode = useLayoutMode()
+  const isShortLandscape = layoutMode === 'short-landscape'
+
+  // サイドバーを開いているか。低い横画面ではグラフを優先して初期状態を閉じる。
+  // 状態は保存しない(リロードで初期値に戻る)
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isShortLandscape)
+  // 画面の形が変わったら、その形の初期値に戻す
+  // (横向きにした瞬間にドロワーが開いたままグラフを覆うのを避ける)
+  const prevLayoutMode = useRef(layoutMode)
+  useEffect(() => {
+    if (prevLayoutMode.current === layoutMode) return
+    prevLayoutMode.current = layoutMode
+    setSidebarOpen(layoutMode !== 'short-landscape')
+  }, [layoutMode])
 
   // ホバー中の記事id。サイドバーはホバー中はそのノード、外れたら現在地を出す
   const [hoveredId, setHoveredId] = useState(null)
@@ -522,7 +540,9 @@ export default function App() {
         : null
 
   return (
-    <div className="app">
+    <div
+      className={`app layout-${layoutMode} ${sidebarOpen ? 'is-sidebar-open' : 'is-sidebar-closed'}`}
+    >
       <TopBar
         onSearch={handleSearch}
         onReset={handleReset}
@@ -586,7 +606,34 @@ export default function App() {
           isCurrent={!!sidebarId && sidebarId === currentId}
           onSelect={handleSidebarSelect}
           disabled={loading}
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen(false)}
+          overlay={isShortLandscape}
         />
+
+        {/* 閉じているときの開くボタン。サイドバーの外に出しておかないと
+            自分ごと消えてしまうので、グラフ側に置く */}
+        {!sidebarOpen && (
+          <button
+            type="button"
+            className="icon-button sidebar-open"
+            aria-label="記事パネルを開く"
+            title="記事パネルを開く"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* スキャンライン(装飾)。操作を邪魔しないよう pointer-events は切る */}
