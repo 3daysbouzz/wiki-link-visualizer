@@ -41,8 +41,15 @@ export default function Sidebar({
     .filter(Boolean)
     .join(' ')
 
+  // inert は「閉じている間は中の要素に触れない」ことをブラウザに伝える。
+  // 幅を 0 にしただけだと Tab キーで中のボタンに入れてしまう
   return (
-    <aside className={className} aria-label="選択中の記事" aria-hidden={!open}>
+    <aside
+      className={className}
+      aria-label="選択中の記事"
+      aria-hidden={!open}
+      inert={open ? undefined : ''}
+    >
       <div className="sidebar-head">
         <div className="sidebar-label">
           {isCurrent || !id ? 'SELECTED NODE' : 'HOVER NODE'}

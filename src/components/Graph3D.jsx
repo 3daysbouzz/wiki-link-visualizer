@@ -265,8 +265,11 @@ const Graph3D = forwardRef(function Graph3D(
     // スマートフォン(狭幅 or 低い横画面)では描画解像度を抑える。
     // DPR 3 の端末でそのまま描くと毎フレームの画素数がデスクトップの数倍になり、動きがもたつく。
     // 横向きにすると幅が 900px を超える端末があるので、幅だけで判定しない(SPEC 4章・8章)
-    const maxPixelRatio = isMobileViewport() ? MOBILE_MAX_PIXEL_RATIO : 2
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxPixelRatio))
+    const initialPixelRatio = Math.min(
+      window.devicePixelRatio,
+      isMobileViewport() ? MOBILE_MAX_PIXEL_RATIO : 2
+    )
+    renderer.setPixelRatio(initialPixelRatio)
     renderer.setSize(container.clientWidth, container.clientHeight)
     container.appendChild(renderer.domElement)
 
@@ -443,6 +446,8 @@ const Graph3D = forwardRef(function Graph3D(
       lastLabelUpdate: 0,
       lastFrame: performance.now(),
       pxToSprite: 1,
+      // 今設定している描画解像度。リサイズのたびに作り直さないための記録
+      pixelRatio: initialPixelRatio,
       driftBack: new THREE.Vector3(),
       driftFront: new THREE.Vector3(),
       pointer: new THREE.Vector2(),
@@ -461,10 +466,17 @@ const Graph3D = forwardRef(function Graph3D(
       camera.aspect = container.clientWidth / container.clientHeight
       camera.updateProjectionMatrix()
       // 端末を回すと縦横比だけでなく「低い横画面かどうか」も変わるので、
-      // 解像度の上限もここで取り直す
-      renderer.setPixelRatio(
-        Math.min(window.devicePixelRatio, isMobileViewport() ? MOBILE_MAX_PIXEL_RATIO : 2)
+      // 解像度の上限もここで取り直す。
+      // ただしサイドバーの開閉アニメーション中は resize が毎フレーム呼ばれるので、
+      // 値が変わったときだけ設定する(setPixelRatio は描画バッファを作り直すため)
+      const nextRatio = Math.min(
+        window.devicePixelRatio,
+        isMobileViewport() ? MOBILE_MAX_PIXEL_RATIO : 2
       )
+      if (nextRatio !== ctx.pixelRatio) {
+        ctx.pixelRatio = nextRatio
+        renderer.setPixelRatio(nextRatio)
+      }
       renderer.setSize(container.clientWidth, container.clientHeight)
       ctx.pxToSprite =
         (2 * Math.tan(((camera.fov * Math.PI) / 180) / 2)) / container.clientHeight

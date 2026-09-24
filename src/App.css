@@ -24,6 +24,13 @@
   /* 狭幅でサイドバーをグラフの下に畳んだときの高さ(固定) */
   --sidebar-stacked-height: 40vh;
   --control-size: 30px;
+
+  /* パネルの開閉モーション。
+     イージングはクリック遷移のカメラ(constants.js の TRAVEL_EASE)と同じ値にして、
+     画面全体で動きの質を揃えている。時間はカメラ(700ms)より短くする
+     ― パネルの開閉は移動ではなく操作の応答なので、待たされる感じを出さない */
+  --panel-motion-duration: 280ms;
+  --panel-motion-ease: cubic-bezier(0.22, 0.85, 0.25, 1);
 }
 
 * {
@@ -405,12 +412,40 @@ button.breadcrumb-item:disabled {
   background: var(--bg);
   overflow: hidden;
   min-height: 0;
+  /* 開閉を一瞬で切り替えると「パッと画角が変わる」感じになるので補間する。
+     幅(高さ)が縮む間 ResizeObserver が canvas を追従させ、グラフが滑らかに広がる */
+  transition:
+    flex-basis var(--panel-motion-duration) var(--panel-motion-ease),
+    width var(--panel-motion-duration) var(--panel-motion-ease),
+    height var(--panel-motion-duration) var(--panel-motion-ease),
+    padding var(--panel-motion-duration) var(--panel-motion-ease),
+    border-width var(--panel-motion-duration) var(--panel-motion-ease),
+    transform var(--panel-motion-duration) var(--panel-motion-ease),
+    opacity calc(var(--panel-motion-duration) * 0.6) var(--panel-motion-ease);
 }
 
-/* 閉じたサイドバーは flex から外す。PC・縦画面ではその分グラフが広がる
-   (このリサイズは利用者が押した結果なので許容する。SPEC 4章) */
+/* 閉じたサイドバーは幅を 0 まで縮める。PC・縦画面ではその分グラフが広がる
+   (このリサイズは利用者が押した結果なので許容する。SPEC 4章)。
+   display:none にすると補間できないので、寸法を 0 にする方法を取っている */
 .sidebar.is-closed {
-  display: none;
+  flex-basis: 0;
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-left-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* 「開く」ボタンは出現が唐突にならないよう、同じ時間で淡く出す */
+@keyframes panel-button-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .sidebar-label {
@@ -444,6 +479,7 @@ button.breadcrumb-item:disabled {
   top: 16px;
   right: 16px;
   z-index: 16;
+  animation: panel-button-in var(--panel-motion-duration) var(--panel-motion-ease);
 }
 
 .sidebar-title {
@@ -602,6 +638,15 @@ button.breadcrumb-item:disabled {
     gap: 14px;
     overflow-y: auto;
   }
+  /* 縦画面では高さを畳む(幅ではなく高さが変わる向きなので指定し直す) */
+  .sidebar.is-closed {
+    flex-basis: 0;
+    width: auto;
+    height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-top-width: 0;
+  }
   /* 畳んだサイドバーは中身を縮めずスクロールさせる */
   .sidebar > * {
     flex-shrink: 0;
@@ -722,9 +767,25 @@ button.breadcrumb-item:disabled {
     -webkit-line-clamp: 4;
   }
 
+  /* ドロワーは重ねているだけなので、寸法は変えずに横へスライドさせて出し入れする。
+     こうすると canvas のリサイズが一切起きないまま動きが付く */
+  .sidebar.is-overlay.is-closed {
+    flex-basis: auto;
+    width: var(--drawer-width);
+    height: auto;
+    padding: 12px 14px;
+    border-left-width: 1px;
+    opacity: 1;
+    transform: translateX(100%);
+  }
+
   /* ドロワーを開いている間も操作できるよう、右下のボタンをドロワーの左へ逃がす */
   .layout-short-landscape.is-sidebar-open .zoom-controls {
     right: calc(var(--drawer-width) + 12px);
+  }
+  /* ドロワーと同じ速さで移動させて、ばらばらに動いて見えないようにする */
+  .zoom-controls {
+    transition: right var(--panel-motion-duration) var(--panel-motion-ease);
   }
   .layout-short-landscape.is-sidebar-open .sidebar-open {
     display: none;
@@ -748,6 +809,18 @@ button.breadcrumb-item:disabled {
   .sidebar-open {
     top: 10px;
     right: 12px;
+  }
+}
+
+/* OS で「視差効果を減らす」を有効にしている人には動かさない
+   (前庭障害のある人には動きが不快になることがあるため) */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .zoom-controls {
+    transition: none;
+  }
+  .sidebar-open {
+    animation: none;
   }
 }
 
