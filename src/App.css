@@ -456,14 +456,15 @@ button.breadcrumb-item:disabled {
   margin-bottom: 6px;
 }
 
-/* 見出し行の右端に格納ボタンを置く */
+/* 見出し行: 左に「ラベル + 記事名」、右端に格納ボタン。
+   子は必ずこの2つだけにすること(3つ並べると記事名がボタンの横に回り込む) */
 .sidebar-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
-.sidebar-head > div:first-child {
+.sidebar-head-text {
   min-width: 0;
   flex: 1;
 }

@@ -448,6 +448,8 @@ const Graph3D = forwardRef(function Graph3D(
       pxToSprite: 1,
       // 今設定している描画解像度。リサイズのたびに作り直さないための記録
       pixelRatio: initialPixelRatio,
+      // 直前の描画領域の高さ。高さが変わったときに縮尺を保つために使う
+      viewportHeight: 0,
       driftBack: new THREE.Vector3(),
       driftFront: new THREE.Vector3(),
       pointer: new THREE.Vector2(),
@@ -478,8 +480,34 @@ const Graph3D = forwardRef(function Graph3D(
         renderer.setPixelRatio(nextRatio)
       }
       renderer.setSize(container.clientWidth, container.clientHeight)
+
+      // --- 高さが変わったら、見た目の縮尺を保つようカメラを前後させる ---
+      // カメラの画角は「縦」で決まっているので、描画領域の高さが変われば
+      // 同じワールド距離が占める画素数が変わる = グラフが拡大・縮小して見える。
+      // 幅だけが変わる場合(PC でサイドバーを畳むとき)は縦の画角が変わらないので
+      // 「同じ大きさのまま横に広く見える」= 自然。高さのときだけこれが崩れる。
+      //
+      // 1px あたりのワールド距離は (注視点までの距離 / 高さ) に比例するので、
+      // 高さの変化と同じ比率で距離を変えれば縮尺が保たれ、
+      // 「広がった分だけ広く見える」ようになる
+      const prevHeight = ctx.viewportHeight
+      const nextHeight = container.clientHeight
+      if (prevHeight && nextHeight !== prevHeight && !ctx.tween) {
+        _v1.copy(camera.position)
+          .sub(controls.target)
+          .multiplyScalar(nextHeight / prevHeight)
+        camera.position.copy(controls.target).add(_v1)
+      }
+      ctx.viewportHeight = nextHeight
+
       ctx.pxToSprite =
         (2 * Math.tan(((camera.fov * Math.PI) / 180) / 2)) / container.clientHeight
+      // サイズを変えた直後にその場で描き直す。
+      // ResizeObserver は「rAF の後・画面に出す前」に呼ばれるので、
+      // ここで canvas を作り直したまま返すと、中身が空のフレームがそのまま表示される。
+      // サイドバーの開閉アニメーション中は毎フレーム resize が走るため、
+      // これをしないと動いている間ずっとグラフが消えたように見える
+      if (ctx.nodes.size > 0) renderNow(ctx, performance.now() / 1000)
     }
     resize()
     const resizeObserver = new ResizeObserver(resize)
@@ -756,6 +784,22 @@ const Graph3D = forwardRef(function Graph3D(
         out[n.id] = [n.x, n.y, n.z].map((v) => Math.round(v * 1000) / 1000)
       }
       return out
+    },
+
+    /**
+     * カメラの状態を返す(デバッグ用)。
+     * 「描画領域の高さが変わっても見た目の縮尺が保たれているか」を
+     * distance / viewportHeight が一定かどうかで確認できる
+     */
+    getCamera() {
+      const ctx = ctxRef.current
+      if (!ctx) return null
+      return {
+        distance: Math.round(ctx.camera.position.distanceTo(ctx.controls.target) * 1000) / 1000,
+        viewportHeight: ctx.viewportHeight,
+        fov: ctx.camera.fov,
+        aspect: Math.round(ctx.camera.aspect * 10000) / 10000,
+      }
     },
 
     /**
@@ -1152,6 +1196,20 @@ function updateVisuals(ctx, t, dt) {
   for (const link of ctx.links) {
     link.bright += (link.brightTarget - link.bright) * k
   }
+}
+
+// ==========================================================================
+// 今の状態を1回だけ描く(リサイズ直後の空フレームを防ぐ)
+//
+// 時間を進めない(dt=0)ので、補間中の値はそのままの見た目で描かれる。
+// ラベルの再配置は重いので呼ばない(次の通常フレームで追いつく)
+// ==========================================================================
+function renderNow(ctx, t) {
+  updateVisuals(ctx, t, 0)
+  updatePositions(ctx)
+  updateGrid(ctx, t)
+  updatePackets(ctx, t)
+  ctx.renderer.render(ctx.scene, ctx.camera)
 }
 
 // ==========================================================================

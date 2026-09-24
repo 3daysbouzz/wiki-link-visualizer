@@ -389,6 +389,7 @@ export default function App() {
         step: (n) => graphRef.current?.stepLayout(n),
         config: () => configRef.current,
         trail: () => trailRef.current,
+        camera: () => graphRef.current?.getCamera() || null,
         // 設定をその場で変える。leva を触らずに挙動を確かめたいときに使う
         // 例: window.__viz.set({ repulsion: 9000 })
         set: (patch) => {

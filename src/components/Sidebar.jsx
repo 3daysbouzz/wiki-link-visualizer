@@ -51,8 +51,15 @@ export default function Sidebar({
       inert={open ? undefined : ''}
     >
       <div className="sidebar-head">
-        <div className="sidebar-label">
-          {isCurrent || !id ? 'SELECTED NODE' : 'HOVER NODE'}
+        {/* ラベルと記事名はひとまとまり。格納ボタンと横並びになるのはこの塊ごと
+            (ばらばらに並べると記事名がボタンの横に回り込んでしまう) */}
+        <div className="sidebar-head-text">
+          <div className="sidebar-label">
+            {isCurrent || !id ? 'SELECTED NODE' : 'HOVER NODE'}
+          </div>
+          <h2 className="sidebar-title">
+            {id ? (summary && summary.title) || id : '記事を検索してください'}
+          </h2>
         </div>
         <button
           type="button"
@@ -74,9 +81,6 @@ export default function Sidebar({
             <path d="M9 6l6 6-6 6" />
           </svg>
         </button>
-        <h2 className="sidebar-title">
-          {id ? (summary && summary.title) || id : '記事を検索してください'}
-        </h2>
       </div>
 
       <dl className="sidebar-meta">
