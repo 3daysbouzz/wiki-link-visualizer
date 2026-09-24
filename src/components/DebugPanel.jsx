@@ -10,8 +10,9 @@ import { PRESETS, RANGES } from '../config/presets.ts'
  * 「初期化でなく、人がパネルを触った」ときだけ上位へ通知する。
  * そうしないと読み込んだだけで URL が書き換わり、設定の反映が循環する。
  *
- * 項目は layout(力学)と visual(見た目)のフォルダに分けている。
+ * 項目は layout(力学)・visual(見た目)・ranking(関連リンクの順位付け)のフォルダに分けている。
  * layout を動かすと配置の計算が再開し、visual は描画だけが変わる(SPEC 12.2)。
+ * ranking は次に展開する記事から効く(表示中のノードは変わらない)。
  * スライダーの端は presets.ts の RANGES と同じものを使う
  * (パネルと URL で通る値の範囲がずれないようにするため)。
  */
@@ -95,6 +96,17 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
           edgePrimaryOpacity: slider('edgePrimaryOpacity', 'edgePrimaryOpacity'),
           edgeWeakOpacity: slider('edgeWeakOpacity', 'edgeWeakOpacity'),
           followLerp: slider('followLerp', 'followLerp', 'カメラ追従の機敏さ'),
+        },
+        { collapsed: false }
+      ),
+
+      // 関連リンクの順位付け。次に展開する記事から効く。
+      // 内訳は Console の console.table(スコアの内訳)で確かめながら調整する
+      ranking: folder(
+        {
+          wMorelike: slider('wMorelike', 'wMorelike', 'morelike 順位の重み'),
+          wMutual: slider('wMutual', 'wMutual', '相互リンクの加点。次の展開から効く'),
+          wLead: slider('wLead', 'wLead', '冒頭リンクの加点。次の展開から効く'),
         },
         { collapsed: false }
       ),

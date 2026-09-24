@@ -26,6 +26,25 @@ export const SAMPLE_BIAS = 10
 // 何件まで取るか(APIの上限は500)。リンク先との突き合わせに使うので多いほどよい
 export const RELATED_LIMIT = 500
 
+// --- 関連スコア (SPEC 3.3) ----------------------------------------------
+// score = wMorelike × m + wMutual × mutual + wLead × lead
+// morelike だけだと、本文の語彙が違う記事(キャラクター記事に対する担当声優など)が
+// 圏外に落ちる。相互リンク・冒頭リンクを加点してそれを拾う。
+//
+// m = 1 / (1 + 順位 / MORELIKE_HALF_RANK)。この順位で m が 0.5 になる。
+// 20 にしておくと、mutual だけ(0.8)の候補が morelike 5位(0.8)と同じ強さになる
+export const MORELIKE_HALF_RANK = 20
+
+// 重みの既定値。VizConfig(presets.ts)にも項目があり、URL と leva から上書きできる。
+// **ここの値は current プリセットの既定値**(=加点なしの従来の順位)。
+// 加点を効かせた値は rev2 プリセット側に書いている
+export const W_MORELIKE = 1
+export const W_MUTUAL = 0
+export const W_LEAD = 0
+
+// ?debug=1 のとき、スコアの内訳を console.table に出す件数
+export const SCORE_DEBUG_ROWS = 20
+
 // リンク先一覧の継続取得の上限回数。1回で最大500件取れるので、
 // 3回=1500件を超えるリンクを持つ記事(「日本」など)はそこで打ち切る
 export const MAX_CONTINUE = 3

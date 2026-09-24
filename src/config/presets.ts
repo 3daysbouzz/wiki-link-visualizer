@@ -22,6 +22,9 @@ import {
   EDGE_PRIMARY_OPACITY,
   EDGE_WEAK_OPACITY,
   FOLLOW_LERP,
+  W_MORELIKE,
+  W_MUTUAL,
+  W_LEAD,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -68,7 +71,29 @@ export interface VizConfig {
   edgeWeakOpacity: number
   /** カメラ追従の追いつき速度。1 に近いほど機敏 */
   followLerp: number
+
+  // --- 関連リンクの順位付け(ranking) -----------------------------------
+  // 変更は次に展開する記事から効く(記憶済みの展開結果は変えない)。SPEC 3.3
+  /** morelike 順位の重み */
+  wMorelike: number
+  /** 相互リンク(候補→中心のリンクもある)の加点 */
+  wMutual: number
+  /** 冒頭リンク(中心記事のリード文・インフォボックスにある)の加点 */
+  wLead: number
 }
+
+/**
+ * rev2 の順位付けの重み。
+ * 相互リンクは「互いに主要な関係」の強い手がかりなので高め(0.8 = morelike 5位相当)、
+ * 冒頭リンクは記事の要点に出てくるが汎用語(国名・「漫画」など)も混ざるので、それより低くする。
+ *
+ * wLead は指示書の 0.4 から 0.6 に上げた(2026-09-25 利用者と合意)。
+ * 作品内の記事は登場人物も作品名もほぼ全員が相互リンクなので、相互リンクの加点は
+ * 上位で差を生まず、声優を押し上げるのは実質的に冒頭リンクだけだった。
+ * 0.4 ではキャラクター記事5件のどれでも声優が確定枠(上位10件)に届かず、
+ * 0.6 で4件が入った。詳細は docs/tasks/01-report-relevance-score.md
+ */
+const REV2_RANKING = { wMorelike: 1.0, wMutual: 0.8, wLead: 0.6 }
 
 export const PRESETS: Record<string, VizConfig> = {
   // 今の見た目をそのまま再現する基準。消さないこと
@@ -90,6 +115,31 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    wMorelike: W_MORELIKE,
+    wMutual: W_MUTUAL,
+    wLead: W_LEAD,
+  },
+  // rev2 の既定。current に関連スコアの加点(相互リンク・冒頭リンク)を足したもの。
+  // 力学・見た目の値は current と同じ(順位付けの違いだけを比べられるように)
+  rev2: {
+    nodeLimit: 300,
+    neighborLimit: 40,
+    edgeMode: 'radial',
+    colorMode: 'mono',
+    trailEnabled: true,
+    seed: 1,
+    repulsion: REPULSION,
+    repulsionRange: REPULSION_RANGE,
+    springK: SPRING_K,
+    springLength: SPRING_LENGTH,
+    centerK: CENTER_K,
+    damping: DAMPING,
+    alphaDecay: ALPHA_DECAY,
+    visibleLabels: VISIBLE_LABELS,
+    edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
+    edgeWeakOpacity: EDGE_WEAK_OPACITY,
+    followLerp: FOLLOW_LERP,
+    ...REV2_RANKING,
   },
   // ネットワークに見せるための設定(Phase 1 以降で本領を発揮する)
   mesh: {
@@ -110,10 +160,13 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    ...REV2_RANKING,
   },
 }
 
-export const DEFAULT_PRESET = 'current'
+// 何も指定しないときのプリセット。rev2 の改善を既定にし、
+// current は ?preset=current で従来の見た目と比べるために残す
+export const DEFAULT_PRESET = 'rev2'
 
 /**
  * 数値項目の範囲。leva のスライダーの端にもそのまま使う。
@@ -133,6 +186,8 @@ export const DEFAULT_PRESET = 'current'
  *                  0.99 を上限にして「絶対に発散しない」側に倒している
  *   alphaDecay     1 以上だと永久に収束しない。小さすぎると動く前に止まる
  *   followLerp     1 でカメラが瞬間移動する。0 だと追従しない
+ *   wMorelike 等   0 で その要素を無視。上限 2 は morelike 1位(1.0)の2倍まで。
+ *                  それ以上は1つの要素だけで順位が決まり、比べる意味がなくなる
  */
 export const RANGES: Record<string, { min: number; max: number; step?: number }> = {
   nodeLimit: { min: 8, max: 1000 },
@@ -149,6 +204,9 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   edgePrimaryOpacity: { min: 0, max: 1, step: 0.05 },
   edgeWeakOpacity: { min: 0, max: 1, step: 0.05 },
   followLerp: { min: 0.005, max: 1, step: 0.005 },
+  wMorelike: { min: 0, max: 2, step: 0.05 },
+  wMutual: { min: 0, max: 2, step: 0.05 },
+  wLead: { min: 0, max: 2, step: 0.05 },
 }
 
 /** 力学に関わる項目。変えたらシミュレーションを再開する(配置は作り直さない) */
@@ -161,6 +219,9 @@ export const LAYOUT_KEYS = [
   'damping',
   'alphaDecay',
 ] as const
+
+/** 関連リンクの順位付けの重み。次に展開する記事から効く */
+export const RANKING_KEYS = ['wMorelike', 'wMutual', 'wLead'] as const
 
 /** 見た目だけの項目。変えても配置は動かない */
 export const VISUAL_KEYS = [
@@ -253,5 +314,9 @@ export function coerceConfig(
       r.edgeWeakOpacity.max
     ),
     followLerp: float(raw.followLerp, base.followLerp, r.followLerp.min, r.followLerp.max),
+
+    wMorelike: float(raw.wMorelike, base.wMorelike, r.wMorelike.min, r.wMorelike.max),
+    wMutual: float(raw.wMutual, base.wMutual, r.wMutual.min, r.wMutual.max),
+    wLead: float(raw.wLead, base.wLead, r.wLead.min, r.wLead.max),
   }
 }

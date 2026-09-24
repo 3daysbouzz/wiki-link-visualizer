@@ -58,7 +58,7 @@ src/
 ├── App.css                   デザイントークン(:root の CSS 変数)とレイアウト
 ├── constants.js              チューニング可能な定数はすべてここ(px・秒・不透明度も)
 ├── api/
-│   ├── wikipedia.js          リンク取得・関連度(morelike)・閲覧数(REST)・抽選・メタ情報・検索候補
+│   ├── wikipedia.js          リンク取得・関連スコア(morelike+相互リンク+冒頭リンク)・閲覧数(REST)・抽選・メタ情報・検索候補
 │   └── summary.js            記事プレビュー(REST summary API)
 └── components/
     ├── Graph3D.jsx           3D描画。ハイライト・ラベル・グリッド・パケット・遷移・カメラ追従
@@ -67,7 +67,7 @@ src/
     ├── Sidebar.jsx           右サイドバー(記事名・メタ・抜粋・隣接記事)
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
-    └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual のフォルダに分ける
+    └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking のフォルダに分ける
 tests/                        node:test のユニットテスト(API のエラー処理・抽選・URL 読み取り)
 ```
 
@@ -102,6 +102,10 @@ tests/                        node:test のユニットテスト(API のエラ�
 
 両方に同じ意味を持たせない。大きさは**画面上のピクセル**で指定する
 (`Sprite` の `sizeAttenuation:false`。カメラ距離で見た目が変わらない)。
+
+**関連記事の順位は合計スコア**(morelike の順位 + 相互リンク + 冒頭リンクの加点。SPEC 3.3)。
+重みは VizConfig の `wMorelike` / `wMutual` / `wLead`。`current` は加点なし(従来の順位)で、
+既定のプリセットは加点ありの `rev2`。スコア計算は純粋関数 `rankCandidates` に切り出してテストしている。
 
 **関連記事の順位付けに閲覧数を使わない。** MediaWiki API の `prop=pageviews` は
 1リクエストで新たに5件しか閲覧数を返さないため、数百件の候補を閲覧数で並べる
@@ -141,7 +145,7 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 
 ```
 [Graph3D] Three.js r169 / WebGL context: OK
-[wikipedia] 初音ミク: 1259ms / リンク先381件(1回取得) / 除外: 日付等7件 / morelike一致91件 → プール150件から40件抽選
+[wikipedia] 初音ミク: 1902ms / リンク先381件(1回取得) / 除外: 日付等7件 / morelike一致90件 / 相互リンク170件 / 冒頭リンク15件 / 確定枠のうちmorelike圏外0件 → プール150件から40件抽選
 [Graph3D] scene updated: nodes=41, links=40
 [pageviews] 41件を1175msで取得
 ```
@@ -150,6 +154,8 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 `MAX_CONTINUE`、「morelike一致」が10件を切る警告が頻発するなら `RELATED_LIMIT` や
 並べ替えの方針(SPEC 3.3)を見直す。`[pageviews]` に「失敗N件」が出続けるなら
 `VIEWS_CONCURRENCY` を下げる(叩きすぎで拒否されている)。
+「冒頭リンク0件(取得失敗)」が続くなら parse の失敗なので、順位は冒頭の加点なしで出ている。
+重みの調整は `?debug=1` の `console.table`(プール上位20件の m・mutual・lead・score)を見て行う。
 
 ## 説明のしかた
 

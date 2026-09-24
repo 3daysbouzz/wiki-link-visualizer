@@ -12,6 +12,8 @@ import {
   RANGES,
   LAYOUT_KEYS,
   VISUAL_KEYS,
+  RANKING_KEYS,
+  DEFAULT_PRESET,
 } from '../src/config/presets.ts'
 import {
   REPULSION,
@@ -25,6 +27,9 @@ import {
   EDGE_PRIMARY_OPACITY,
   EDGE_WEAK_OPACITY,
   FOLLOW_LERP,
+  W_MORELIKE,
+  W_MUTUAL,
+  W_LEAD,
 } from '../src/constants.js'
 
 beforeEach(() => {
@@ -45,18 +50,24 @@ describe('readUrlState', () => {
     assert.equal(s.presetName, 'mesh')
   })
 
-  test('不明なプリセットは既定にフォールバックする', () => {
+  test('不明なプリセットは既定(rev2)にフォールバックする', () => {
     const s = readUrlState('?preset=nope')
-    assert.equal(s.presetName, 'current')
-    assert.deepEqual(s.config, PRESETS.current)
+    assert.equal(DEFAULT_PRESET, 'rev2')
+    assert.equal(s.presetName, 'rev2')
+    assert.deepEqual(s.config, PRESETS.rev2)
+  })
+
+  test('プリセット指定なしなら rev2、?preset=current で従来の設定', () => {
+    assert.equal(readUrlState('').presetName, 'rev2')
+    assert.deepEqual(readUrlState('?preset=current').config, PRESETS.current)
   })
 
   test('壊れた数値・真偽値は例外にせずプリセットの値を使う', () => {
     const s = readUrlState('?nodeLimit=abc&seed=-5&trailEnabled=maybe&edgeMode=zzz')
-    assert.equal(s.config.nodeLimit, PRESETS.current.nodeLimit)
+    assert.equal(s.config.nodeLimit, PRESETS[DEFAULT_PRESET].nodeLimit)
     assert.equal(s.config.seed, 0) // 範囲外は下限に丸める
-    assert.equal(s.config.trailEnabled, PRESETS.current.trailEnabled)
-    assert.equal(s.config.edgeMode, PRESETS.current.edgeMode)
+    assert.equal(s.config.trailEnabled, PRESETS[DEFAULT_PRESET].trailEnabled)
+    assert.equal(s.config.edgeMode, PRESETS[DEFAULT_PRESET].edgeMode)
   })
 
   test('HTML のような文字列もそのまま文字列として返る(表示側で React がエスケープする)', () => {
@@ -187,12 +198,37 @@ describe('current プリセットと constants.js の一致', () => {
     assert.equal(PRESETS.current.edgePrimaryOpacity, EDGE_PRIMARY_OPACITY)
     assert.equal(PRESETS.current.edgeWeakOpacity, EDGE_WEAK_OPACITY)
     assert.equal(PRESETS.current.followLerp, FOLLOW_LERP)
+    assert.equal(PRESETS.current.wMorelike, W_MORELIKE)
+    assert.equal(PRESETS.current.wMutual, W_MUTUAL)
+    assert.equal(PRESETS.current.wLead, W_LEAD)
   })
 
-  test('既定値はすべて許容範囲の内側にある', () => {
-    for (const [key, range] of Object.entries(RANGES)) {
-      const v = PRESETS.current[key]
-      assert.ok(v >= range.min && v <= range.max, `${key}=${v} が範囲外 (${range.min}〜${range.max})`)
+  test('current は加点なし(従来の順位)、rev2 と mesh は加点あり', () => {
+    assert.equal(PRESETS.current.wMutual, 0)
+    assert.equal(PRESETS.current.wLead, 0)
+    for (const name of ['rev2', 'mesh']) {
+      assert.equal(PRESETS[name].wMorelike, 1.0)
+      assert.equal(PRESETS[name].wMutual, 0.8)
+      assert.equal(PRESETS[name].wLead, 0.6)
+    }
+  })
+
+  test('rev2 の重み以外の値は current と同じ(順位付けの違いだけを比べられる)', () => {
+    for (const [key, v] of Object.entries(PRESETS.current)) {
+      if (RANKING_KEYS.includes(key)) continue
+      assert.equal(PRESETS.rev2[key], v, `${key} が current と違う`)
+    }
+  })
+
+  test('各プリセットの値はすべて許容範囲の内側にある', () => {
+    for (const [name, preset] of Object.entries(PRESETS)) {
+      for (const [key, range] of Object.entries(RANGES)) {
+        const v = preset[key]
+        assert.ok(
+          v >= range.min && v <= range.max,
+          `${name}.${key}=${v} が範囲外 (${range.min}〜${range.max})`
+        )
+      }
     }
   })
 })
@@ -205,9 +241,16 @@ describe('URL クエリでの力学パラメータの上書き', () => {
     assert.equal(s.config.visibleLabels, 40)
   })
 
-  test('壊れた値は current の値に戻る', () => {
+  test('?wMutual=&wLead= で重みを上書きでき、範囲外は端に丸める', () => {
+    const s = readUrlState('?wMutual=0.5&wLead=9&wMorelike=abc')
+    assert.equal(s.config.wMutual, 0.5)
+    assert.equal(s.config.wLead, RANGES.wLead.max)
+    assert.equal(s.config.wMorelike, PRESETS[DEFAULT_PRESET].wMorelike)
+  })
+
+  test('壊れた値は既定プリセットの値に戻る', () => {
     const s = readUrlState('?repulsion=xyz&damping=99')
-    assert.equal(s.config.repulsion, PRESETS.current.repulsion)
+    assert.equal(s.config.repulsion, PRESETS[DEFAULT_PRESET].repulsion)
     assert.equal(s.config.damping, RANGES.damping.max)
   })
 })

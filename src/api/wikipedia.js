@@ -19,6 +19,11 @@
  *   さらに前は prop=links&pllimit=40 で「記事名のコード順に先頭40件」を取っていた。
  *   これは関連度と無関係で日付記事だらけになる。
  *
+ *   rev2 からは morelike の順位に「相互リンク」「冒頭リンク」の加点を足した
+ *   合計スコアで並べる(SPEC 3.3)。morelike は本文の語彙で似ているかを見るので、
+ *   キャラクター記事に対する担当声優(出演作の一覧が中心の記事)のように
+ *   語彙は違うが関係の強い記事を取りこぼす。それを拾うための加点。
+ *
  * CORS:
  *   origin=* を付けると Access-Control-Allow-Origin が動的に返るので、
  *   専用バックエンドなしでブラウザから直接呼べる。
@@ -34,6 +39,11 @@ import {
   RELATED_LIMIT,
   VIEWS_CONCURRENCY,
   FETCH_TIMEOUT_MS,
+  MORELIKE_HALF_RANK,
+  W_MORELIKE,
+  W_MUTUAL,
+  W_LEAD,
+  SCORE_DEBUG_ROWS,
 } from '../constants.js'
 
 const API_ENDPOINT = 'https://ja.wikipedia.org/w/api.php'
@@ -189,46 +199,104 @@ async function fetchCenterArticle(title) {
 
 /**
  * generator=links でリンク先ページを列挙する。prop=info で記事の長さも取る
- * (morelike に出てこなかったリンク先を並べるときの目安にする)。
+ * (スコアが同点のときの並べ替えに使う)。
+ *
+ * 相互リンクの判定も同じリクエストに相乗りさせる:
+ *   prop=links&pltitles=<中心記事> を付けると、各リンク先ページについて
+ *   「そのページから中心記事へのリンク」があるときだけ links が返る。
+ *   list=backlinks(中心記事への被リンク)と突き合わせる方式も試したが、
+ *   初音ミク・綾波レイ・孫悟空 (ドラゴンボール) で結果が完全に一致したうえ、
+ *   こちらは追加のリクエストが要らない(待ち時間が増えない)のでこちらを採った。SPEC 3.3
  *
  * 1回で最大500件。それ以上リンクがある記事は continue が返るので
  * MAX_CONTINUE 回まで続けて取る。
+ * prop=links 側の続き(plcontinue)は同じ500件の続きなので、回数に数えない
+ * (pltitles が1件なら1ページあたり高々1リンクで、実際には起きない)。
+ *
+ * query.redirects(from→to)も集めておく。冒頭リンク(parse)の名前は
+ * リダイレクト解決前なので、候補と突き合わせる前にこれで解決する。
  */
 async function fetchLinks(resolvedTitle, onProgress) {
   const merged = new Map() // title => { title, length }
+  const mutual = new Set() // 中心記事へリンクし返している候補
+  const redirects = new Map() // リダイレクト元 => 先
   let continueParams = {}
   let round = 0
+  let requests = 0
+  let more = false // 取りきれずに残りがある(上限で打ち切った)
 
-  while (round < MAX_CONTINUE) {
-    round += 1
-
+  // requests は plcontinue が万一続いたときの歯止め
+  while (round < MAX_CONTINUE && requests < MAX_CONTINUE * 4) {
+    requests += 1
     const data = await apiGet({
       action: 'query',
       titles: resolvedTitle,
       generator: 'links',
       gplnamespace: '0', // 標準記事名前空間のみ
       gpllimit: 'max', // 1回あたり最大500件
-      prop: 'info',
+      prop: 'info|links',
+      pltitles: resolvedTitle,
+      pllimit: 'max',
       redirects: '1',
       ...continueParams,
     })
 
-    const pages = (data.query && data.query.pages) || []
-    for (const page of pages) {
+    const query = data.query || {}
+    for (const page of query.pages || []) {
       if (!page.title || page.missing) continue
       if (!merged.has(page.title)) {
         merged.set(page.title, { title: page.title, length: page.length || 0 })
       }
+      if (Array.isArray(page.links) && page.links.length > 0) mutual.add(page.title)
+    }
+    for (const r of query.redirects || []) {
+      if (r.from && r.to) redirects.set(r.from, r.to)
     }
 
     if (onProgress) onProgress(merged.size)
 
-    if (!data.continue) break
+    more = !!data.continue
+    if (!data.continue) {
+      round += 1
+      break
+    }
+    // generator の続き(次の500件)のときだけ1回と数える
+    if (data.continue.gplcontinue !== continueParams.gplcontinue) round += 1
     continueParams = data.continue
   }
 
-  const reachedLimit = round >= MAX_CONTINUE
-  return { candidates: Array.from(merged.values()), rounds: round, reachedLimit }
+  return {
+    candidates: Array.from(merged.values()),
+    mutual,
+    redirects,
+    rounds: round,
+    reachedLimit: more,
+  }
+}
+
+/**
+ * 中心記事の冒頭節(section=0。リード文とインフォボックス)にあるリンク先を取る。
+ * 「冒頭に出てくる」= 記事の要点に関わる相手、という手がかりにする
+ * (キャラクター記事ならインフォボックスに担当声優が載る)。
+ *
+ * 返すのはリダイレクト解決前の名前(本文に書かれたままのリンク先)。
+ *
+ * @returns {Promise<Set<string>>}
+ */
+async function fetchLeadLinks(resolvedTitle) {
+  const data = await apiGet({
+    action: 'parse',
+    page: resolvedTitle,
+    prop: 'links',
+    section: '0',
+    redirects: '1',
+  })
+  const links = (data.parse && data.parse.links) || []
+  const titles = new Set()
+  for (const l of links) {
+    if (l && l.ns === 0 && l.title) titles.add(l.title)
+  }
+  return titles
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +426,69 @@ export async function fetchPageviews(titles, onEach) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. リンクの抽選 (SPEC 3.5)
+// 5. 関連スコア (SPEC 3.3)
+// ---------------------------------------------------------------------------
+
+/** 重みの既定値(current プリセットと同じ = 加点なし) */
+const DEFAULT_WEIGHTS = { wMorelike: W_MORELIKE, wMutual: W_MUTUAL, wLead: W_LEAD }
+
+/**
+ * morelike の順位(0始まり)を 0〜1 の値にする。圏外(undefined/null)は 0。
+ * 順位そのものではなく緩やかに減る値にしているのは、
+ * 他の要素(0/1)と足し合わせられる尺度に揃えるため
+ */
+export function morelikeValue(rank) {
+  if (rank === undefined || rank === null) return 0
+  return 1 / (1 + rank / MORELIKE_HALF_RANK)
+}
+
+/**
+ * 候補の素材から合計スコアを計算し、スコアの高い順に並べる(純粋関数)。
+ *
+ *   score = wMorelike × m + wMutual × mutual + wLead × lead
+ *
+ * 同点は記事の長さの降順、それも同じならタイトル順(コードポイント順)。
+ * localeCompare は環境で結果が変わりうるので使わない(順序を決定論的にするため)。
+ *
+ * @param {{title:string, length:number, rank?:number|null, mutual:0|1, lead:0|1}[]} materials
+ * @param {{wMorelike:number, wMutual:number, wLead:number}} weights
+ * @returns {{title:string, length:number, m:number, mutual:0|1, lead:0|1, score:number}[]}
+ */
+export function rankCandidates(materials, weights = DEFAULT_WEIGHTS) {
+  const w = { ...DEFAULT_WEIGHTS, ...weights }
+  const scored = materials.map((c) => {
+    const m = morelikeValue(c.rank)
+    const mutual = c.mutual ? 1 : 0
+    const lead = c.lead ? 1 : 0
+    return {
+      title: c.title,
+      length: c.length || 0,
+      m,
+      mutual,
+      lead,
+      score: w.wMorelike * m + w.wMutual * mutual + w.wLead * lead,
+    }
+  })
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      b.length - a.length ||
+      (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)
+  )
+  return scored
+}
+
+/**
+ * 素材から候補プール(上位 POOL_SIZE 件)を作る。
+ * 並べ替えは linkCache から取り出すたびに行う
+ * (重みを変えたとき、キャッシュ済みの記事にも反映されるように)
+ */
+function buildPool(materials, weights) {
+  return rankCandidates(materials, weights).slice(0, POOL_SIZE)
+}
+
+// ---------------------------------------------------------------------------
+// 6. リンクの抽選 (SPEC 3.5)
 // ---------------------------------------------------------------------------
 
 /**
@@ -406,39 +536,80 @@ export function pickLinks(pool, limit, random = Math.random) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. 公開API
+// 7. 公開API
 // ---------------------------------------------------------------------------
 
-// 取得済みの候補プールをタイトルごとに覚えておく。
+// 取得済みの候補の「素材」をタイトルごとに覚えておく。
 // 一度歩いた記事に戻ってきたときの再取得(数秒かかる)をなくすため。
 // ページを開いている間だけ有効なメモリキャッシュ。
+//
+// 並べ替え後のプールではなく、スコア計算前の素材(morelike 順位・mutual・lead・length)を
+// 持つ。並べ替えと抽選は取り出すときに行う。そうしないと重みを変えても
+// キャッシュ済みの記事に反映されない
 const linkCache = new Map()
 
+/** ?debug=1 のとき、プール上位のスコアの内訳を表で出す(重みの調整に使う) */
+function logScoreTable(title, pool) {
+  console.info('[wikipedia] %s: スコアの内訳(上位%d件)', title, SCORE_DEBUG_ROWS)
+  console.table(
+    pool.slice(0, SCORE_DEBUG_ROWS).map((c) => ({
+      title: c.title,
+      m: Number(c.m.toFixed(3)),
+      mutual: c.mutual,
+      lead: c.lead,
+      score: Number(c.score.toFixed(3)),
+    }))
+  )
+}
+
+/** 確定枠(上位 GUARANTEED_TOP)のうち morelike 圏外の件数。加点がどれだけ効いたかの目安 */
+function countOutsideMorelike(pool) {
+  return pool.slice(0, GUARANTEED_TOP).filter((c) => c.m === 0).length
+}
+
 /**
- * 指定記事の関連記事を、内容の近い順に取得する。
+ * 補助情報の取得。失敗しても展開全体は止めず、空として続ける
+ * (閲覧数と同じ「補助情報は取れなくても止めない」扱い)
+ */
+function optional(promise, label, empty) {
+  return promise.catch((e) => {
+    console.warn('[wikipedia] %sを取得できませんでした(加点なしで続行): %s', label, e.message)
+    return empty
+  })
+}
+
+/**
+ * 指定記事の関連記事を、関連スコアの高い順のプールから抽選して取得する。
  * 閲覧数は含まない(表示するノード分だけ fetchPageviews で別途取ること)。
  *
  * @param {string} title 記事名
- * @param {number} limit 返すリンク数の上限
- * @param {(count:number)=>void} [onProgress] 取得済み候補数の通知
- * @param {boolean} [assumeCanonical]
+ * @param {object} [options]
+ * @param {number} [options.limit] 返すリンク数の上限
+ * @param {(count:number)=>void} [options.onProgress] 取得済み候補数の通知
+ * @param {boolean} [options.assumeCanonical]
  *   タイトルが正規化済みだと分かっている場合に true。
  *   グラフ上のノードから展開するときは、そのタイトルはAPIが返したものなので
  *   正規化済み。この場合「中心記事の解決」を待たずにリンク取得を始めら
  *   れるので、直列だった2つのリクエストを並列にできる(往復1回分の短縮)。
- * @param {(resolvedTitle:string) => () => number} [randomFor]
+ * @param {(resolvedTitle:string) => () => number} [options.randomFor]
  *   抽選に使う乱数を「解決後の記事名」から作る関数。
  *   入力の表記ゆれに関係なく同じ記事なら同じ抽選になるよう、解決後の名前で作る。
  *   省略時は Math.random
+ * @param {{wMorelike:number, wMutual:number, wLead:number}} [options.weights]
+ *   関連スコアの重み(SPEC 3.3)。省略時は加点なし(current と同じ)
+ * @param {boolean} [options.debug] true ならスコアの内訳を console.table に出す
  * @returns {Promise<{ title:string, links:{title:string}[] }>}
  */
-export async function fetchLinkedArticles(
-  title,
-  limit,
-  onProgress,
-  assumeCanonical = false,
-  randomFor = () => Math.random
-) {
+export async function fetchLinkedArticles(title, options = {}) {
+  const {
+    limit = 40,
+    onProgress,
+    assumeCanonical = false,
+    randomFor = () => Math.random,
+    weights = DEFAULT_WEIGHTS,
+    debug = false,
+  } = options
+
   const trimmed = title.trim()
   if (!trimmed) {
     throw new Error('記事名を入力してください')
@@ -446,11 +617,14 @@ export async function fetchLinkedArticles(
 
   const cached = linkCache.get(trimmed)
   if (cached) {
-    // キャッシュがあっても抽選はやり直す(乱数が種付きなら同じ結果になる)
-    console.info('[wikipedia] %s: キャッシュから取得(再抽選)', trimmed)
+    // キャッシュがあっても並べ替えと抽選はやり直す
+    // (重みが同じ・乱数が種付きなら同じ結果になる)
+    const pool = buildPool(cached.materials, weights)
+    console.info('[wikipedia] %s: キャッシュから取得(再抽選)', cached.title)
+    if (debug) logScoreTable(cached.title, pool)
     return {
       title: cached.title,
-      links: pickLinks(cached.pool, limit, randomFor(cached.title)),
+      links: pickLinks(pool, limit, randomFor(cached.title)).map((c) => ({ title: c.title })),
     }
   }
 
@@ -459,90 +633,107 @@ export async function fetchLinkedArticles(
   let center
   let linkResult
   let ranks
+  let leadRaw
+
+  // 冒頭リンクは補助情報。失敗しても 0 として続ける
+  const lead = (t) => optional(fetchLeadLinks(t), '冒頭リンク', null)
 
   if (assumeCanonical) {
-    // タイトルが確定しているので、3つのリクエストを同時に投げる
-    ;[center, linkResult, ranks] = await Promise.all([
+    // タイトルが確定しているので、4つのリクエストを同時に投げる
+    ;[center, linkResult, ranks, leadRaw] = await Promise.all([
       fetchCenterArticle(trimmed),
       fetchLinks(trimmed, onProgress),
       fetchRelatedRanks(trimmed),
+      lead(trimmed),
     ])
   } else {
     // ユーザー入力はリダイレクトや表記ゆれの可能性があるので、
     // まず正規化してから(存在しない記事もここで弾ける)残りを同時に取りにいく
     center = await fetchCenterArticle(trimmed)
-    ;[linkResult, ranks] = await Promise.all([
+    ;[linkResult, ranks, leadRaw] = await Promise.all([
       fetchLinks(center.title, onProgress),
       fetchRelatedRanks(center.title),
+      lead(center.title),
     ])
   }
 
-  const { candidates, rounds, reachedLimit } = linkResult
+  const { candidates, mutual, redirects, rounds, reachedLimit } = linkResult
 
-  // --- 除外フィルタ ---
+  // 冒頭リンクの名前をリダイレクト解決してから候補と照合する
+  // (parse はリダイレクト解決前の名前を返し、候補は解決後の名前なので)
+  const leadSet = new Set()
+  if (leadRaw) {
+    for (const t of leadRaw) leadSet.add(redirects.get(t) || t)
+  }
+
+  // --- 除外フィルタと素材づくり ---
   let excludedByTitle = 0
-  const filtered = candidates.filter((c) => {
-    if (c.title === center.title) return false
+  let related = 0
+  let mutualCount = 0
+  let leadCount = 0
+  const materials = []
+  for (const c of candidates) {
+    if (c.title === center.title) continue
     if (isExcludedTitle(c.title)) {
       excludedByTitle += 1
-      return false
+      continue
     }
-    return true
-  })
-
-  // --- 並べ替え ---
-  // morelike に出てきたリンク先をその順位で先頭に置き、
-  // 出てこなかったものは記事の長さ(書き込まれている量)が多い順で後ろに続ける。
-  // 後ろの方は抽選の重みが小さいので、たまに顔を出す程度になる
-  const related = []
-  const others = []
-  for (const c of filtered) {
     const rank = ranks.get(c.title)
-    if (rank !== undefined) related.push({ ...c, rank })
-    else others.push(c)
+    const m = {
+      title: c.title,
+      length: c.length,
+      rank: rank === undefined ? null : rank,
+      mutual: mutual.has(c.title) ? 1 : 0,
+      lead: leadSet.has(c.title) ? 1 : 0,
+    }
+    if (m.rank !== null) related += 1
+    mutualCount += m.mutual
+    leadCount += m.lead
+    materials.push(m)
   }
-  related.sort((a, b) => a.rank - b.rank)
-  others.sort((a, b) => b.length - a.length)
 
-  const pool = related
-    .concat(others)
-    .slice(0, POOL_SIZE)
-    .map((c) => ({ title: c.title }))
-
-  const entry = { title: center.title, pool }
+  const entry = { title: center.title, materials }
   linkCache.set(trimmed, entry)
   if (center.title !== trimmed) linkCache.set(center.title, entry)
 
+  // --- 並べ替え(合計スコア順)と抽選 ---
+  const pool = buildPool(materials, weights)
   const picked = pickLinks(pool, limit, randomFor(center.title))
   const elapsed = Math.round(performance.now() - startedAt)
 
   console.info(
     '[wikipedia] %s: %dms / リンク先%d件(%d回取得%s) / 除外: 日付等%d件 / ' +
-      'morelike一致%d件 → プール%d件から%d件抽選',
+      'morelike一致%d件 / 相互リンク%d件 / 冒頭リンク%d件%s / ' +
+      '確定枠のうちmorelike圏外%d件 → プール%d件から%d件抽選',
     center.title,
     elapsed,
     candidates.length,
     rounds,
     reachedLimit ? ', 上限打ち切り' : '',
     excludedByTitle,
-    related.length,
+    related,
+    mutualCount,
+    leadCount,
+    leadRaw ? '' : '(取得失敗)',
+    countOutsideMorelike(pool),
     pool.length,
     picked.length
   )
+  if (debug) logScoreTable(center.title, pool)
 
-  if (related.length < GUARANTEED_TOP) {
+  if (related < GUARANTEED_TOP) {
     console.warn(
       '[wikipedia] morelike と一致するリンク先が%d件しかありません。' +
-        '短い記事や特殊な記事では関連度の情報が薄く、記事の長さ順で埋めています。',
-      related.length
+        '短い記事や特殊な記事では関連度の情報が薄く、相互リンク・冒頭リンク・記事の長さで埋めています。',
+      related
     )
   }
 
-  return { title: center.title, links: picked }
+  return { title: center.title, links: picked.map((c) => ({ title: c.title })) }
 }
 
 // ---------------------------------------------------------------------------
-// 7. サイドバー用のメタ情報(カテゴリ・被リンク数・更新日)
+// 8. サイドバー用のメタ情報(カテゴリ・被リンク数・更新日)
 // ---------------------------------------------------------------------------
 
 // 記事名 => メタ情報。同じノードに何度もカーソルが乗るので都度取らない
@@ -609,7 +800,7 @@ export async function fetchArticleMeta(title) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. 検索候補(オートコンプリート)
+// 9. 検索候補(オートコンプリート)
 // ---------------------------------------------------------------------------
 
 /**

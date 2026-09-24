@@ -158,6 +158,20 @@ export default function App() {
   const randomFor = (resolvedTitle) =>
     seededRandom(configRef.current.seed, resolvedTitle)
 
+  // fetchLinkedArticles に渡す共通の設定。呼ぶ時点の最新の config から作るので、
+  // 件数・種・重みの変更は「次に展開する記事から」効く(記憶済みの展開結果は変えない)
+  const linkOptions = (assumeCanonical) => {
+    const c = configRef.current
+    return {
+      limit: c.neighborLimit,
+      onProgress: setProgress,
+      assumeCanonical,
+      randomFor,
+      weights: { wMorelike: c.wMorelike, wMutual: c.wMutual, wLead: c.wLead },
+      debug: initialUrlState.debug,
+    }
+  }
+
   const rebuild = (nextTrail) =>
     buildGraph(nextTrail, expansions.current, viewsOf.current, configRef.current)
 
@@ -221,13 +235,7 @@ export default function App() {
     setError(null)
     try {
       // ユーザー入力はリダイレクトや表記ゆれの可能性があるので正規化させる
-      const result = await fetchLinkedArticles(
-        title,
-        configRef.current.neighborLimit,
-        setProgress,
-        false,
-        randomFor
-      )
+      const result = await fetchLinkedArticles(title, linkOptions(false))
 
       viewsSession.current += 1
       expansions.current = new Map()
@@ -299,13 +307,7 @@ export default function App() {
       try {
         // グラフ上のノード名はAPIが返したものなので正規化済み。
         // 中心記事の解決を待たずにリンク取得を始められる(往復1回分の短縮)
-        const result = await fetchLinkedArticles(
-          node.id,
-          configRef.current.neighborLimit,
-          setProgress,
-          true,
-          randomFor
-        )
+        const result = await fetchLinkedArticles(node.id, linkOptions(true))
 
         rememberExpansion(result.title, result.links)
 
@@ -407,13 +409,12 @@ export default function App() {
       setError(null)
       let nextTrail = []
       try {
-        const limit = configRef.current.neighborLimit
-        const first = await fetchLinkedArticles(start, limit, setProgress, false, randomFor)
+        const first = await fetchLinkedArticles(start, linkOptions(false))
         rememberExpansion(first.title, first.links)
         nextTrail = [first.title]
 
         for (const step of path) {
-          const r = await fetchLinkedArticles(step, limit, setProgress, true, randomFor)
+          const r = await fetchLinkedArticles(step, linkOptions(true))
           rememberExpansion(r.title, r.links)
           nextTrail = [...nextTrail.filter((id) => id !== r.title), r.title]
         }
