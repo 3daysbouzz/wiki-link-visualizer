@@ -107,6 +107,9 @@ export default function TopBar({ onSearch, onReset, loading, stats }) {
     }
   }, [])
 
+  // 未入力で入力欄にフォーカスが無いときだけ、点滅カーソルを見せる
+  const showFakeCursor = !focused && !value
+
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -124,32 +127,36 @@ export default function TopBar({ onSearch, onReset, loading, stats }) {
           <span className="search-prompt" aria-hidden="true">
             &gt;
           </span>
-          <input
-            type="text"
-            className="search-input"
-            value={value}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onFocus={() => {
-              setFocused(true)
-              if (suggestions.length > 0 || noHits) setOpen(true)
-            }}
-            onBlur={() => setFocused(false)}
-            placeholder="記事を検索"
-            aria-label="記事を検索"
-            aria-autocomplete="list"
-            aria-expanded={open}
-            aria-controls="search-suggestions"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={loading}
-          />
-          {/* 点滅カーソル。入力中(フォーカス中)は本物のキャレットがあるので消す */}
-          {!focused && !value && (
-            <span className="search-cursor" aria-hidden="true">
-              _
-            </span>
-          )}
+          {/* 入力欄と点滅カーソルをまとめる枠。カーソルを入力欄の左端に重ねるため */}
+          <span className="search-field">
+            <input
+              type="text"
+              className={`search-input${showFakeCursor ? ' has-fake-cursor' : ''}`}
+              value={value}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onFocus={() => {
+                setFocused(true)
+                if (suggestions.length > 0 || noHits) setOpen(true)
+              }}
+              onBlur={() => setFocused(false)}
+              placeholder="記事を検索"
+              aria-label="記事を検索"
+              aria-autocomplete="list"
+              aria-expanded={open}
+              aria-controls="search-suggestions"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={loading}
+            />
+            {/* 点滅カーソル。フォーカス時に本物のキャレットが出るのと同じ左端に置く。
+                入力中(フォーカス中)は本物のキャレットがあるので消す */}
+            {showFakeCursor && (
+              <span className="search-cursor" aria-hidden="true">
+                _
+              </span>
+            )}
+          </span>
 
           {/* 0件のときも黙らず「見つからない」と伝える(入力ミスにその場で気づけるように) */}
           {open && noHits && suggestions.length === 0 && (

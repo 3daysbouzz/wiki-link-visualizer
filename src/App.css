@@ -145,6 +145,15 @@ a:hover {
   opacity: 0.5;
 }
 
+/* 入力欄の入れ物。点滅カーソルを入力欄の左端に重ねる基準にする */
+.search-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
 .search-input {
   flex: 1;
   min-width: 0;
@@ -173,10 +182,21 @@ a:hover {
     opacity: 0;
   }
 }
+/* 点滅カーソルを見せている間は、その幅だけプレースホルダを右へ送る
+   (カーソルとプレースホルダの先頭の文字が重ならないように) */
+.search-input.has-fake-cursor {
+  padding-left: calc(1ch + 4px);
+}
 .search-cursor {
-  /* プレースホルダの直後に見せるため、入力欄の上に重ねる */
+  /* 入力欄の左端(フォーカスしたとき本物のキャレットが出る位置)に重ねる。
+     以前は「プレースホルダの直後」を ch 単位で見積もっていたが、日本語は 1ch より
+     幅が広いので、プレースホルダの途中に食い込んだ不自然な位置に出ていた */
   position: absolute;
-  left: calc(14px + 1ch + 8px + 5ch + 4px);
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
   color: #fff;
   animation: blink 1s step-end infinite;
   pointer-events: none;
