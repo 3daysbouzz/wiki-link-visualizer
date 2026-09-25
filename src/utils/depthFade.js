@@ -26,3 +26,22 @@ export function depthFadeOf(delta, start, end) {
 export function keepsLabelCandidate(fadeTarget, wasVisible, show, keep) {
   return fadeTarget >= (wasVisible ? keep : show)
 }
+
+/**
+ * value を target へ、最大 step だけ近づける(等速)。ラベルの出入りの進み具合に使う
+ */
+export function approach(value, target, step) {
+  if (value < target) return Math.min(target, value + step)
+  if (value > target) return Math.max(target, value - step)
+  return value
+}
+
+/**
+ * 0〜1 の進み具合を、ゆっくり始まってゆっくり終わる曲線にする(smoothstep)。
+ * 指数補間(最初に一気に動いて最後にゆっくり止まる)だと出始めが急に見えるので、
+ * ラベルの出入りはこちらで「ふわっと」させる
+ */
+export function smoothstep(t) {
+  const x = Math.min(Math.max(t, 0), 1)
+  return x * x * (3 - 2 * x)
+}

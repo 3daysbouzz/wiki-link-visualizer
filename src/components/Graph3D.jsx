@@ -2,7 +2,12 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { seededRandom } from '../utils/prng.js'
-import { depthFadeOf, keepsLabelCandidate } from '../utils/depthFade.js'
+import {
+  depthFadeOf,
+  keepsLabelCandidate,
+  approach,
+  smoothstep,
+} from '../utils/depthFade.js'
 import {
   LABEL_CANDIDATES,
   VIEWS_SCALE_MIN,
@@ -64,6 +69,7 @@ import {
   LABEL_FADE_KEEP,
   LABEL_KEEP_BIAS,
   LABEL_SWAP_S,
+  LABEL_SWAP_RISE_PX,
   LABEL_OVERLAP_FAINT,
   LABEL_FAINT_MAX,
 } from '../constants.js'
@@ -1101,6 +1107,8 @@ function syncGraph(ctx, graphData, currentId) {
         // ラベルの出入り(選ばれた / 選ばれなくなった)のフェード。labelShowTarget は選ばれていれば 1
         labelShow: 0,
         labelShowTarget: 0,
+        // 出入りの進み具合(等速で 0〜1)。labelShow はこれを smoothstep にかけたもの
+        labelShowLinear: 0,
       }
       spawnPosition(ctx, node)
       const material = new THREE.SpriteMaterial({
@@ -1316,7 +1324,8 @@ function updateVisuals(ctx, t, dt) {
 
   updateDepthFadeTargets(ctx)
   const swapFade = ctx.visual.labelDepthFade
-  const kSwap = 1 - Math.exp(-dt / (LABEL_SWAP_S / 3))
+  // 出入りは等速で進め、見た目は smoothstep で「ゆっくり始まってゆっくり終わる」にする
+  const swapStep = dt / LABEL_SWAP_S
 
   // 取得中のノードの脈動。関連記事の取得には数秒かかることがあるので、
   // クリックしたノード自身を動かして「今これを取りに行っている」ことを示す
@@ -1337,10 +1346,11 @@ function updateVisuals(ctx, t, dt) {
     // ラベルの出入り。深さフェードが有効なときは LABEL_SWAP_S をかけて出し入れし、
     // 無効なとき(current)は従来どおり即座に切り替える
     if (swapFade) {
-      node.labelShow += (node.labelShowTarget - node.labelShow) * kSwap
-      if (node.label) node.label.visible = node.labelShowTarget > 0 || node.labelShow > 0.01
+      node.labelShowLinear = approach(node.labelShowLinear, node.labelShowTarget, swapStep)
+      node.labelShow = smoothstep(node.labelShowLinear)
+      if (node.label) node.label.visible = node.labelShowTarget > 0 || node.labelShowLinear > 0
     } else {
-      node.labelShow = node.labelShowTarget
+      node.labelShowLinear = node.labelShow = node.labelShowTarget
     }
 
     let px = node.basePx
@@ -1359,6 +1369,12 @@ function updateVisuals(ctx, t, dt) {
       node.label.material.color.copy(LABEL_BASE_COLOR).lerp(LABEL_HOVER_COLOR_OBJ, v.labelBright)
       // ホバーの減光などの不透明度に、深さフェードを掛ける
       node.label.material.opacity = v.opacity * node.labelFade * node.labelShow
+      // 出入りの途中は少し下にずらす(現れるときは浮かび上がり、消えるときは沈む)。
+      // 置き場所(アンカー)は updateLabelVisibility が決め、ここではずらしだけを足す
+      if (node._anchorX !== undefined) {
+        const rise = swapFade ? ((1 - node.labelShow) * LABEL_SWAP_RISE_PX) / node.label.userData.px : 0
+        node.label.center.set(node._anchorX, node._anchorY + rise)
+      }
     }
   }
 
@@ -1684,6 +1700,8 @@ function updateLabelVisibility(ctx) {
 
     if (faint) {
       node._labelReason = 'faint'
+      node._anchorX = label.center.x
+      node._anchorY = label.center.y
       node.labelShowTarget = 1
       label.visible = true
       faintShown += 1
@@ -1699,6 +1717,8 @@ function updateLabelVisibility(ctx) {
     }
 
     node._labelReason = 'shown'
+    node._anchorX = label.center.x
+    node._anchorY = label.center.y
     rects.push(rect)
     // 新たに選ばれたラベルは labelShow が 0 付近から上がる(フェードが有効なとき)ので浮かび上がる
     node.labelShowTarget = 1

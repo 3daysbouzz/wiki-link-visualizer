@@ -113,8 +113,9 @@ const REV2_RANKING = { wMorelike: 1.0, wMutual: 0.8, wLead: 0.6 }
 /** rev2 のラベルの深さフェード。current はオフ(従来の見た目を保つ) */
 const REV2_LABELS = {
   labelDepthFade: true,
-  fadeStart: LABEL_FADE_START,
-  fadeEnd: LABEL_FADE_END,
+  // 現在地の手前 60 から薄くなり始め、奥 60 で消える。理由は constants.js の LABEL_FADE_* のコメント
+  fadeStart: -60,
+  fadeEnd: 60,
 }
 
 export const PRESETS: Record<string, VizConfig> = {

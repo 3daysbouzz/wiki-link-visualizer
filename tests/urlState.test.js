@@ -216,6 +216,11 @@ describe('current プリセットと constants.js の一致', () => {
     assert.equal(PRESETS.current.labelDepthFade, false)
     assert.equal(PRESETS.rev2.labelDepthFade, true)
     assert.equal(PRESETS.mesh.labelDepthFade, true)
+    // rev2・mesh は現在地の手前から薄くし始める
+    for (const name of ['rev2', 'mesh']) {
+      assert.equal(PRESETS[name].fadeStart, -60)
+      assert.equal(PRESETS[name].fadeEnd, 60)
+    }
   })
 
   test('current は加点なし(従来の順位)、rev2 と mesh は加点あり', () => {
@@ -229,7 +234,7 @@ describe('current プリセットと constants.js の一致', () => {
   })
 
   test('rev2 の重み・ラベルの深さフェード以外の値は current と同じ(改善点だけを比べられる)', () => {
-    const REV2_ONLY = ['wMutual', 'wLead', 'labelDepthFade']
+    const REV2_ONLY = ['wMutual', 'wLead', 'labelDepthFade', 'fadeStart', 'fadeEnd']
     for (const [key, v] of Object.entries(PRESETS.current)) {
       if (REV2_ONLY.includes(key)) continue
       assert.equal(PRESETS.rev2[key], v, `${key} が current と違う`)

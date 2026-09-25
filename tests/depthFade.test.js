@@ -4,7 +4,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { depthFadeOf, keepsLabelCandidate } from '../src/utils/depthFade.js'
+import { depthFadeOf, keepsLabelCandidate, approach, smoothstep } from '../src/utils/depthFade.js'
 import { LABEL_FADE_SHOW, LABEL_FADE_KEEP } from '../src/constants.js'
 
 describe('depthFadeOf', () => {
@@ -35,5 +35,25 @@ describe('keepsLabelCandidate', () => {
     assert.equal(keepsLabelCandidate(mid, true, LABEL_FADE_SHOW, LABEL_FADE_KEEP), true)
     assert.equal(keepsLabelCandidate(0, true, LABEL_FADE_SHOW, LABEL_FADE_KEEP), false)
     assert.equal(keepsLabelCandidate(1, false, LABEL_FADE_SHOW, LABEL_FADE_KEEP), true)
+  })
+})
+
+describe('ラベルの出入り(approach / smoothstep)', () => {
+  test('approach は目標を越えずに等速で近づく', () => {
+    assert.equal(approach(0, 1, 0.3), 0.3)
+    assert.equal(approach(0.9, 1, 0.3), 1)
+    assert.equal(approach(1, 0, 0.25), 0.75)
+    assert.equal(approach(0.1, 0, 0.25), 0)
+    assert.equal(approach(0.5, 0.5, 0.1), 0.5)
+  })
+
+  test('smoothstep は端で 0 / 1、真ん中で 0.5、出始めと終わりがゆっくり', () => {
+    assert.equal(smoothstep(0), 0)
+    assert.equal(smoothstep(1), 1)
+    assert.equal(smoothstep(0.5), 0.5)
+    assert.ok(smoothstep(0.1) < 0.1) // 出始めは等速より遅い
+    assert.ok(smoothstep(0.9) > 0.9) // 終わりも等速よりゆっくり目標に寄る
+    assert.equal(smoothstep(-1), 0)
+    assert.equal(smoothstep(2), 1)
   })
 })
