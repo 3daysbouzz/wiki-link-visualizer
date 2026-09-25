@@ -68,10 +68,11 @@ src/
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
     └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking のフォルダに分ける
-tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・URL 読み取り)
+tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り)
 ```
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
+`src/utils/depthFade.js`(ラベルの深さフェードの計算)は SPEC 6.3。
 
 `index.html` で Google Fonts(Space Grotesk / JetBrains Mono)を `<link>` で読む。
 これは npm 依存ではないので上の「依存を増やさない」には抵触しない。

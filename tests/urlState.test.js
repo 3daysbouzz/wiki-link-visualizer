@@ -12,7 +12,6 @@ import {
   RANGES,
   LAYOUT_KEYS,
   VISUAL_KEYS,
-  RANKING_KEYS,
   DEFAULT_PRESET,
 } from '../src/config/presets.ts'
 import {
@@ -30,6 +29,11 @@ import {
   W_MORELIKE,
   W_MUTUAL,
   W_LEAD,
+  MORE_BATCH,
+  MORE_MAX,
+  LABEL_DEPTH_FADE,
+  LABEL_FADE_START,
+  LABEL_FADE_END,
 } from '../src/constants.js'
 
 beforeEach(() => {
@@ -201,6 +205,17 @@ describe('current プリセットと constants.js の一致', () => {
     assert.equal(PRESETS.current.wMorelike, W_MORELIKE)
     assert.equal(PRESETS.current.wMutual, W_MUTUAL)
     assert.equal(PRESETS.current.wLead, W_LEAD)
+    assert.equal(PRESETS.current.moreBatch, MORE_BATCH)
+    assert.equal(PRESETS.current.moreMax, MORE_MAX)
+    assert.equal(PRESETS.current.labelDepthFade, LABEL_DEPTH_FADE)
+    assert.equal(PRESETS.current.fadeStart, LABEL_FADE_START)
+    assert.equal(PRESETS.current.fadeEnd, LABEL_FADE_END)
+  })
+
+  test('ラベルの深さフェードは current でオフ、rev2 と mesh でオン', () => {
+    assert.equal(PRESETS.current.labelDepthFade, false)
+    assert.equal(PRESETS.rev2.labelDepthFade, true)
+    assert.equal(PRESETS.mesh.labelDepthFade, true)
   })
 
   test('current は加点なし(従来の順位)、rev2 と mesh は加点あり', () => {
@@ -213,9 +228,10 @@ describe('current プリセットと constants.js の一致', () => {
     }
   })
 
-  test('rev2 の重み以外の値は current と同じ(順位付けの違いだけを比べられる)', () => {
+  test('rev2 の重み・ラベルの深さフェード以外の値は current と同じ(改善点だけを比べられる)', () => {
+    const REV2_ONLY = ['wMutual', 'wLead', 'labelDepthFade']
     for (const [key, v] of Object.entries(PRESETS.current)) {
-      if (RANKING_KEYS.includes(key)) continue
+      if (REV2_ONLY.includes(key)) continue
       assert.equal(PRESETS.rev2[key], v, `${key} が current と違う`)
     }
   })
@@ -239,6 +255,14 @@ describe('URL クエリでの力学パラメータの上書き', () => {
     assert.equal(s.config.repulsion, 8000)
     assert.equal(s.config.springK, 0.03)
     assert.equal(s.config.visibleLabels, 40)
+  })
+
+  test('?labelDepthFade=&fadeStart=&fadeEnd= が読める(小数・負の値も通る)', () => {
+    const s = readUrlState('?labelDepthFade=0&fadeStart=-20&fadeEnd=87.5')
+    assert.equal(s.config.labelDepthFade, false)
+    assert.equal(s.config.fadeStart, -20)
+    assert.equal(s.config.fadeEnd, 87.5)
+    assert.equal(readUrlState('?preset=current&labelDepthFade=on').config.labelDepthFade, true)
   })
 
   test('?wMutual=&wLead= で重みを上書きでき、範囲外は端に丸める', () => {

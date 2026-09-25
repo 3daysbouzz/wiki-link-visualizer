@@ -27,6 +27,9 @@ import {
   W_LEAD,
   MORE_BATCH,
   MORE_MAX,
+  LABEL_DEPTH_FADE,
+  LABEL_FADE_START,
+  LABEL_FADE_END,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -73,6 +76,12 @@ export interface VizConfig {
   edgeWeakOpacity: number
   /** カメラ追従の追いつき速度。1 に近いほど機敏 */
   followLerp: number
+  /** 現在地より奥のラベルを深さに応じて薄くするか(SPEC 6.3) */
+  labelDepthFade: boolean
+  /** 薄くし始める深さの差(ワールド座標。現在地より奥が正) */
+  fadeStart: number
+  /** 見えなくなる深さの差 */
+  fadeEnd: number
 
   // --- 関連リンクの順位付け(ranking) -----------------------------------
   // 変更は次に展開する記事から効く(記憶済みの展開結果は変えない)。SPEC 3.3
@@ -101,6 +110,13 @@ export interface VizConfig {
  */
 const REV2_RANKING = { wMorelike: 1.0, wMutual: 0.8, wLead: 0.6 }
 
+/** rev2 のラベルの深さフェード。current はオフ(従来の見た目を保つ) */
+const REV2_LABELS = {
+  labelDepthFade: true,
+  fadeStart: LABEL_FADE_START,
+  fadeEnd: LABEL_FADE_END,
+}
+
 export const PRESETS: Record<string, VizConfig> = {
   // 今の見た目をそのまま再現する基準。消さないこと
   current: {
@@ -121,6 +137,9 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    labelDepthFade: LABEL_DEPTH_FADE,
+    fadeStart: LABEL_FADE_START,
+    fadeEnd: LABEL_FADE_END,
     wMorelike: W_MORELIKE,
     wMutual: W_MUTUAL,
     wLead: W_LEAD,
@@ -147,6 +166,7 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    ...REV2_LABELS,
     ...REV2_RANKING,
     moreBatch: MORE_BATCH,
     moreMax: MORE_MAX,
@@ -170,6 +190,7 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    ...REV2_LABELS,
     ...REV2_RANKING,
     moreBatch: MORE_BATCH,
     moreMax: MORE_MAX,
@@ -198,6 +219,9 @@ export const DEFAULT_PRESET = 'rev2'
  *                  0.99 を上限にして「絶対に発散しない」側に倒している
  *   alphaDecay     1 以上だと永久に収束しない。小さすぎると動く前に止まる
  *   followLerp     1 でカメラが瞬間移動する。0 だと追従しない
+ *   fadeStart/End  深さの差(ワールド座標)。負にすると現在地より手前から薄くなる。
+ *                  グラフの広がり(SPAWN_SPREAD・springLength)の数倍あれば十分。
+ *                  fadeEnd ≤ fadeStart でも壊れない(その深さを境に表示/非表示が切り替わる)
  *   wMorelike 等   0 で その要素を無視。上限 2 は morelike 1位(1.0)の2倍まで。
  *                  それ以上は1つの要素だけで順位が決まり、比べる意味がなくなる
  *   moreBatch      0 だと追加できない。上限は POOL_SIZE の範囲で一度に出して意味のある量
@@ -218,6 +242,8 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   edgePrimaryOpacity: { min: 0, max: 1, step: 0.05 },
   edgeWeakOpacity: { min: 0, max: 1, step: 0.05 },
   followLerp: { min: 0.005, max: 1, step: 0.005 },
+  fadeStart: { min: -200, max: 400, step: 5 },
+  fadeEnd: { min: -195, max: 800, step: 5 },
   wMorelike: { min: 0, max: 2, step: 0.05 },
   wMutual: { min: 0, max: 2, step: 0.05 },
   wLead: { min: 0, max: 2, step: 0.05 },
@@ -248,6 +274,9 @@ export const VISUAL_KEYS = [
   'edgePrimaryOpacity',
   'edgeWeakOpacity',
   'followLerp',
+  'labelDepthFade',
+  'fadeStart',
+  'fadeEnd',
 ] as const
 
 /** URL や leva から来た値を VizConfig の型に揃える。不正な値は base の値を使う */
@@ -333,6 +362,9 @@ export function coerceConfig(
       r.edgeWeakOpacity.max
     ),
     followLerp: float(raw.followLerp, base.followLerp, r.followLerp.min, r.followLerp.max),
+    labelDepthFade: bool(raw.labelDepthFade, base.labelDepthFade),
+    fadeStart: float(raw.fadeStart, base.fadeStart, r.fadeStart.min, r.fadeStart.max),
+    fadeEnd: float(raw.fadeEnd, base.fadeEnd, r.fadeEnd.min, r.fadeEnd.max),
 
     wMorelike: float(raw.wMorelike, base.wMorelike, r.wMorelike.min, r.wMorelike.max),
     wMutual: float(raw.wMutual, base.wMutual, r.wMutual.min, r.wMutual.max),

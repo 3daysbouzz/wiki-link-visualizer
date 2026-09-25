@@ -2,6 +2,7 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { seededRandom } from '../utils/prng.js'
+import { depthFadeOf, keepsLabelCandidate } from '../utils/depthFade.js'
 import {
   LABEL_CANDIDATES,
   VIEWS_SCALE_MIN,
@@ -59,6 +60,8 @@ import {
   MORE_SHAKE_PX,
   MORE_SHAKE_CYCLES,
   MORE_SPAWN_JITTER,
+  LABEL_FADE_SHOW,
+  LABEL_FADE_KEEP,
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
@@ -114,6 +117,7 @@ const LABEL_TEXTURE_SCALE = 3
 const _v1 = new THREE.Vector3()
 const _v2 = new THREE.Vector3()
 const _v3 = new THREE.Vector3()
+const _forward = new THREE.Vector3()
 const _color = new THREE.Color()
 const LABEL_BASE_COLOR = new THREE.Color(LABEL_COLOR)
 const LABEL_HOVER_COLOR_OBJ = new THREE.Color(LABEL_HOVER_COLOR)
@@ -842,6 +846,43 @@ const Graph3D = forwardRef(function Graph3D(
     },
 
     /**
+     * ラベルの状態を返す(デバッグ用。深さフェードの確認に使う)。
+     * delta は現在地との深さの差(正ほど奥)、fade は補間後の深さフェード
+     */
+    getLabelState() {
+      const ctx = ctxRef.current
+      if (!ctx) return []
+      const current = ctx.currentId ? ctx.nodes.get(ctx.currentId) : null
+      ctx.camera.getWorldDirection(_forward)
+      const depthOf = (n) =>
+        displayPosition(ctx, n, _v1).sub(ctx.camera.position).dot(_forward)
+      const base = current ? depthOf(current) : 0
+      return Array.from(ctx.nodes.values()).map((n) => ({
+        id: n.id,
+        tier: n.tier,
+        visible: !!(n.label && n.label.visible),
+        delta: Math.round((depthOf(n) - base) * 10) / 10,
+        fade: Math.round(n.labelFade * 1000) / 1000,
+        opacity: n.label ? Math.round(n.label.material.opacity * 1000) / 1000 : 0,
+      }))
+    },
+
+    /**
+     * 1フレーム分のラベル処理(深さフェードの目標・補間・間引き)を n 回まわして
+     * かかった時間(ms)を返す(デバッグ用。ノードが多いときの負荷の確認に使う)
+     */
+    measureLabelWork(n = 100) {
+      const ctx = ctxRef.current
+      if (!ctx) return null
+      const started = performance.now()
+      for (let i = 0; i < n; i++) {
+        updateVisuals(ctx, performance.now() / 1000, 1 / 60)
+        updateLabelVisibility(ctx)
+      }
+      return (performance.now() - started) / n
+    },
+
+    /**
      * レイアウト計算を同期的に n ステップ進める(デバッグ用)。
      * 描画のフレームに関係なく決まった回数だけ進められるので、
      * 環境が違っても「同じ回数進めた結果」を比較できる
@@ -1043,6 +1084,9 @@ function syncGraph(ctx, graphData, currentId) {
         // 見た目の現在値と目標値。毎フレーム目標へ補間する(ホバーの 0.2 秒遷移)
         vis: { scale: 1, opacity: 1, labelBright: 0 },
         target: { scale: 1, opacity: 1, labelBright: 0 },
+        // ラベルの深さフェード(SPEC 6.3)。labelFade は補間後、labelFadeTarget は毎フレームの目標
+        labelFade: 1,
+        labelFadeTarget: 1,
       }
       spawnPosition(ctx, node)
       const material = new THREE.SpriteMaterial({
@@ -1220,11 +1264,43 @@ function applyHighlight(ctx) {
 }
 
 // ==========================================================================
+// ラベルの深さフェード (SPEC 6.3)
+//
+// 現在地より奥にあるラベルほど薄くし、fadeEnd より奥では消す。
+// 深さ = カメラの視線方向に沿った距離(表示位置 displayPosition で測る)。
+//   delta = depth(ノード) − depth(現在地)   正の値ほど現在地より奥
+// 現在地とホバー中のノードは常に 1(どの角度でも読めるように)。
+// ここでは目標値だけを決める。実際の不透明度は updateVisuals がホバーと同じ方式で補間する
+// (ラベルの選び直しは 200ms 間隔なので、それに合わせるとカクつくため)
+// ==========================================================================
+function updateDepthFadeTargets(ctx) {
+  const { labelDepthFade, fadeStart, fadeEnd } = ctx.visual
+  const current = ctx.currentId ? ctx.nodes.get(ctx.currentId) : null
+  if (!labelDepthFade || !current) {
+    for (const node of ctx.nodes.values()) node.labelFadeTarget = 1
+    return
+  }
+  const camera = ctx.camera
+  camera.getWorldDirection(_forward)
+  const depthOf = (node) => displayPosition(ctx, node, _v1).sub(camera.position).dot(_forward)
+  const baseDepth = depthOf(current)
+  for (const node of ctx.nodes.values()) {
+    if (node.isCurrent || node.id === ctx.hoveredId) {
+      node.labelFadeTarget = 1
+    } else {
+      node.labelFadeTarget = depthFadeOf(depthOf(node) - baseDepth, fadeStart, fadeEnd)
+    }
+  }
+}
+
+// ==========================================================================
 // 見た目の補間(ホバー・遷移の 0.2 秒トランジション、起点の呼吸、取得中の脈動)
 // ==========================================================================
 function updateVisuals(ctx, t, dt) {
   // 指数補間: HOVER_TRANSITION_S でおおむね目標に達する
   const k = 1 - Math.exp(-dt / (HOVER_TRANSITION_S / 3))
+
+  updateDepthFadeTargets(ctx)
 
   // 取得中のノードの脈動。関連記事の取得には数秒かかることがあるので、
   // クリックしたノード自身を動かして「今これを取りに行っている」ことを示す
@@ -1241,6 +1317,7 @@ function updateVisuals(ctx, t, dt) {
     v.scale += (g.scale - v.scale) * k
     v.opacity += (g.opacity - v.opacity) * k
     v.labelBright += (g.labelBright - v.labelBright) * k
+    node.labelFade += (node.labelFadeTarget - node.labelFade) * k
 
     let px = node.basePx
     if (node.isCurrent) {
@@ -1256,7 +1333,8 @@ function updateVisuals(ctx, t, dt) {
 
     if (node.label) {
       node.label.material.color.copy(LABEL_BASE_COLOR).lerp(LABEL_HOVER_COLOR_OBJ, v.labelBright)
-      node.label.material.opacity = v.opacity
+      // ホバーの減光などの不透明度に、深さフェードを掛ける
+      node.label.material.opacity = v.opacity * node.labelFade
     }
   }
 
@@ -1469,9 +1547,24 @@ function updateLabelVisibility(ctx) {
 
   // --- 1. 候補を集めて優先度をつける ---
   const candidates = []
+  const fadeOn = ctx.visual.labelDepthFade
   for (const node of ctx.nodes.values()) {
     if (!node.label) continue
+    // 前回表示していたか(新たに出すラベルをフェードインさせるのと、候補の基準を分けるため)
+    node._wasLabelVisible = node.label.visible
     node.label.visible = false
+
+    // 深さで見えなくなっているラベルは候補から外す(VISIBLE_LABELS の枠と場所を使わせない)。
+    // 追加表示の優先ラベル(labelBoost)も例外にしない。
+    // 出すときと引っ込めるときで基準を変え、閾値付近でチラつかないようにする
+    // (目標値は毎フレーム更新なので、ホバーが変わった直後のこの呼び出しでは古い。
+    // そのため現在地・ホバー中はここでも明示的に除外しない)
+    if (fadeOn && !node.isCurrent && node.id !== hoveredId) {
+      if (
+        !keepsLabelCandidate(node.labelFadeTarget, node._wasLabelVisible, LABEL_FADE_SHOW, LABEL_FADE_KEEP)
+      )
+        continue
+    }
 
     let priority
     if (hoveredId) {
@@ -1548,6 +1641,9 @@ function updateLabelVisibility(ctx) {
     rects.push(rect)
     label.visible = true
     shown += 1
+    // 新たに出すラベルは不透明度 0 からフェードインさせる(深さフェードが有効なときだけ。
+    // 無効なときは従来どおり即座に出す)
+    if (fadeOn && !node._wasLabelVisible) node.labelFade = 0
   }
 }
 

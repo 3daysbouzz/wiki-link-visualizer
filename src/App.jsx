@@ -521,6 +521,9 @@ export default function App() {
         camera: () => graphRef.current?.getCamera() || null,
         // ノードの画面上の位置(canvas 内の px)。クリックの確認に使う
         screenOf: (id) => graphRef.current?.getScreenPosition(id) || null,
+        // ラベルの状態(深さフェードの確認用)と、1フレーム分のラベル処理の時間(ms)
+        labels: () => graphRef.current?.getLabelState() || [],
+        labelWork: (n) => graphRef.current?.measureLabelWork(n),
         // 設定をその場で変える。leva を触らずに挙動を確かめたいときに使う
         // 例: window.__viz.set({ repulsion: 9000 })
         set: (patch) => {

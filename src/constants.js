@@ -164,6 +164,32 @@ export const LABEL_HOVER_COLOR = '#ffffff'
 // ラベル表示の再評価の間隔(ms)。毎フレームだと重い
 export const LABEL_UPDATE_INTERVAL_MS = 200
 
+// --- ラベルの深さフェード (SPEC 6.3) ---------------------------------------
+// 現在地より奥にあるラベルを深さに応じて薄くし、一定以上奥では消す。
+// グラフを回して手前に持ってきたときに初めて名前が読める、という体験にするため。
+// 球と線は今まで通り見せる(「そこに何かある」ことは分かるようにする)。
+//
+// delta = (ノードの深さ) − (現在地の深さ)。深さはカメラの視線方向に沿った距離。
+//   delta ≤ LABEL_FADE_START            … そのまま(不透明度 1)
+//   LABEL_FADE_START < delta < LABEL_FADE_END … 線形に薄くする
+//   delta ≥ LABEL_FADE_END              … 消える
+// VizConfig(presets.ts)にも項目があり、URL と leva から上書きできる。
+// **ここの値は current プリセットの既定値**(current はオフ = 従来の見た目)。
+//
+// 終点は springLength(55)の2倍 = 110 にした。一次ノードは現在地からおおむね
+// springLength 前後の距離に並ぶので、「現在地と同じ奥行きの記事ははっきり、
+// 反対側(一次ノードの輪のいちばん奥)の記事は見えない」になる。
+// 始点を 0(現在地の深さ)にしたのは、現在地より手前の記事は常に読めるようにするため
+export const LABEL_DEPTH_FADE = false
+export const LABEL_FADE_START = 0
+export const LABEL_FADE_END = 110
+// 深さで薄くなったラベルを、間引きの候補から外す基準(補間前の目標の不透明度)。
+// 見えないラベルが VISIBLE_LABELS の枠と重なり判定の場所を使うと、
+// 手前に出せたはずのラベルが減ってしまうため。
+// 出す基準(SHOW)と引っ込める基準(KEEP)を分けて、閾値付近でチラつかないようにする
+export const LABEL_FADE_SHOW = 0.05
+export const LABEL_FADE_KEEP = 0.02
+
 // --- 背景グリッド ---------------------------------------------------------
 // 起点を中心にした同心円と放射状ガイド線。カメラに正対させて起点に追従させる
 export const GRID_RING_RADII_PX = [60, 120, 180, 240, 300]

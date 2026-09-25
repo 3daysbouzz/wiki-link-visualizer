@@ -96,6 +96,14 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
           edgePrimaryOpacity: slider('edgePrimaryOpacity', 'edgePrimaryOpacity'),
           edgeWeakOpacity: slider('edgeWeakOpacity', 'edgeWeakOpacity'),
           followLerp: slider('followLerp', 'followLerp', 'カメラ追従の機敏さ'),
+          labelDepthFade: {
+            value: config.labelDepthFade,
+            label: 'labelDepthFade',
+            hint: '現在地より奥のラベルを深さに応じて薄くする',
+            onChange: fromPanelOnly((v) => onChange({ labelDepthFade: v })),
+          },
+          fadeStart: slider('fadeStart', 'fadeStart', '薄くし始める深さの差'),
+          fadeEnd: slider('fadeEnd', 'fadeEnd', '見えなくなる深さの差'),
         },
         { collapsed: false }
       ),
