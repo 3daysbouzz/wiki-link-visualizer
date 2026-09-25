@@ -62,6 +62,7 @@ import {
   MORE_SPAWN_JITTER,
   LABEL_FADE_SHOW,
   LABEL_FADE_KEEP,
+  LABEL_KEEP_BIAS,
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
@@ -611,6 +612,10 @@ const Graph3D = forwardRef(function Graph3D(
     // ---- ホバー: 隣接ハイライト + 上位への通知 ----
     let hoverRaf = null
     const onPointerMove = (e) => {
+      // ボタンを押している間(ドラッグで回している間・タッチ中)はホバーを更新しない。
+      // 更新すると、回している最中にカーソルの下を球が通るたびにホバー表示
+      // (隣接以外のラベルを隠す)が入って、画面全体のラベルが点滅する
+      if (e.buttons) return
       if (hoverRaf) return
       const clientX = e.clientX
       const clientY = e.clientY
@@ -864,6 +869,7 @@ const Graph3D = forwardRef(function Graph3D(
         delta: Math.round((depthOf(n) - base) * 10) / 10,
         fade: Math.round(n.labelFade * 1000) / 1000,
         opacity: n.label ? Math.round(n.label.material.opacity * 1000) / 1000 : 0,
+        reason: n._labelReason,
       }))
     },
 
@@ -1553,6 +1559,8 @@ function updateLabelVisibility(ctx) {
     // 前回表示していたか(新たに出すラベルをフェードインさせるのと、候補の基準を分けるため)
     node._wasLabelVisible = node.label.visible
     node.label.visible = false
+    // 表示しなかった理由(デバッグ用。window.__viz.labels() で見る)
+    node._labelReason = 'rank'
 
     // 深さで見えなくなっているラベルは候補から外す(VISIBLE_LABELS の枠と場所を使わせない)。
     // 追加表示の優先ラベル(labelBoost)も例外にしない。
@@ -1562,8 +1570,10 @@ function updateLabelVisibility(ctx) {
     if (fadeOn && !node.isCurrent && node.id !== hoveredId) {
       if (
         !keepsLabelCandidate(node.labelFadeTarget, node._wasLabelVisible, LABEL_FADE_SHOW, LABEL_FADE_KEEP)
-      )
+      ) {
+        node._labelReason = 'depth'
         continue
+      }
     }
 
     let priority
@@ -1571,7 +1581,10 @@ function updateLabelVisibility(ctx) {
       // ホバー中は隣接以外のラベルは出さない(6.1と揃える)
       if (node.id === hoveredId) priority = 0
       else if (neighbors && neighbors.has(node.id)) priority = 1
-      else continue
+      else {
+        node._labelReason = 'hover'
+        continue
+      }
     } else {
       priority = node.tier
       // 現在地(0)の次、ほかの一次ノード(1)より前
@@ -1581,6 +1594,9 @@ function updateLabelVisibility(ctx) {
     displayPosition(ctx, node, _v1)
     node._priority = priority
     node._camDistSq = _v1.distanceToSquared(camera.position)
+    // 前回表示していたラベルは少し近いものとして扱う(回転中の入れ替わりを減らす)。
+    // 重なり判定も先に処理されるので、同じ場所を争ったときに表示中のものが勝つ
+    if (node._wasLabelVisible) node._camDistSq *= LABEL_KEEP_BIAS * LABEL_KEEP_BIAS
     candidates.push(node)
   }
 
@@ -1608,6 +1624,7 @@ function updateLabelVisibility(ctx) {
     _v1.project(camera) // 以降 _v1 はNDC座標
 
     // カメラの後ろ / 画面外は捨てる
+    node._labelReason = 'offscreen'
     if (_v1.z < -1 || _v1.z > 1) continue
     const sx = (_v1.x * 0.5 + 0.5) * width
     const sy = (-_v1.y * 0.5 + 0.5) * height
@@ -1636,8 +1653,12 @@ function updateLabelVisibility(ctx) {
     const overlaps = rects.some(
       (o) => !(rect.x2 < o.x1 || rect.x1 > o.x2 || rect.y2 < o.y1 || rect.y1 > o.y2)
     )
-    if (overlaps) continue
+    if (overlaps) {
+      node._labelReason = 'overlap'
+      continue
+    }
 
+    node._labelReason = 'shown'
     rects.push(rect)
     label.visible = true
     shown += 1
