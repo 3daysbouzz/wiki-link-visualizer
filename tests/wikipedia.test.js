@@ -416,6 +416,107 @@ describe('fetchLinkedArticles: 関連スコア', () => {
   })
 })
 
+// --- 打ち切りで漏れた冒頭リンクの補完(SPEC 3.3) ------------------------------------
+
+/**
+ * リンク先が多く、generator=links が MAX_CONTINUE 回で打ち切られる記事の展開を偽装する。
+ *   - 候補(generator=links で取れた分): A(morelike 1位)、X(冒頭・相互)
+ *   - 冒頭リンク(parse): X、「漢字旧名」(漢字記事へのリダイレクト)、漢字2、赤リンク、1936年
+ *   - 補完の問い合わせ: 漢字記事(相互・morelike 2位)、漢字2(相互なし)、赤リンクは missing
+ * extra: 'ok' | 'fail'。requests に補完の問い合わせの titles を記録する
+ */
+function mockTruncated(center, { truncated = true, extra = 'ok', requests = [] } = {}) {
+  let round = 0
+  mockFetch((params) => {
+    if (params.get('action') === 'parse') {
+      return fakeResponse(200, {
+        parse: {
+          title: center,
+          links: ['X', '漢字旧名', '漢字2', '赤リンク', '1936年', center].map((title) => ({
+            ns: 0,
+            title,
+            exists: title !== '赤リンク',
+          })),
+        },
+      })
+    }
+    if (params.get('generator') === 'links') {
+      round += 1
+      return fakeResponse(200, {
+        ...(truncated ? { continue: { gplcontinue: `c${round}`, continue: 'gplcontinue||' } } : {}),
+        query: {
+          pages: [
+            { title: `A${round}`, length: 500 },
+            { title: 'X', length: 100, links: [{ ns: 0, title: center }] },
+          ],
+        },
+      })
+    }
+    if (params.get('list') === 'search') {
+      return fakeResponse(200, { query: { search: [{ title: 'A1' }, { title: '漢字記事' }] } })
+    }
+    if (params.get('pltitles') === center) {
+      // 補完の問い合わせ(generator なしで titles と pltitles を持つ)
+      requests.push(params.get('titles').split('|'))
+      if (extra === 'fail') return fakeResponse(503, 'Service Unavailable')
+      return fakeResponse(200, {
+        query: {
+          redirects: [{ from: '漢字旧名', to: '漢字記事' }],
+          pages: [
+            { ns: 0, title: '漢字記事', length: 50, links: [{ ns: 0, title: center }] },
+            { ns: 0, title: '漢字2', length: 60 },
+            { ns: 0, title: '赤リンク', missing: true },
+            { ns: 0, title: '1936年', length: 10 },
+          ],
+        },
+      })
+    }
+    if (params.get('titles')) {
+      return fakeResponse(200, { query: { pages: [{ title: center }] } })
+    }
+    throw new Error('想定外のリクエスト')
+  })
+}
+
+describe('fetchLinkedArticles: 打ち切りで漏れた冒頭リンクの補完', () => {
+  test('候補に無い冒頭リンクが解決後の名前で入り、相互リンク・morelike 順位も反映される', async () => {
+    const requests = []
+    mockTruncated('中心記事T1', { requests })
+    const r = await fetchLinkedArticles('中心記事T1', { limit: 10, weights: REV2 })
+    const titles = r.links.map((l) => l.title)
+    // 漢字記事 = morelike 2位 + 相互 + 冒頭 で1位。A1(morelike 1位のみ)・X(相互+冒頭)より上
+    assert.equal(titles[0], '漢字記事')
+    assert.ok(titles.includes('漢字2')) // 相互なし・冒頭のみでも候補には入る
+    assert.ok(!titles.includes('漢字旧名')) // リダイレクト前の名前では入らない
+    assert.ok(!titles.includes('赤リンク')) // 存在しない記事は入らない
+    assert.ok(!titles.includes('1936年')) // 日付記事は補った候補でも除外する
+    assert.ok(!titles.includes('中心記事T1'))
+    // 問い合わせは1回。既に候補にある X と中心記事自身は問い合わせない
+    assert.equal(requests.length, 1)
+    assert.deepEqual(requests[0].slice().sort(), ['1936年', '漢字2', '漢字旧名', '赤リンク'].sort())
+    // 補った候補は追加表示の候補にも入る(linkCache に素材として保存されている)
+    assert.equal(countMoreLinks('中心記事T1', titles, REV2), 0)
+    assert.equal(r.links.length, 6) // A1〜A3・X・漢字記事・漢字2
+  })
+
+  test('打ち切りが無い展開では、補完の問い合わせをしない', async () => {
+    const requests = []
+    mockTruncated('中心記事T2', { truncated: false, requests })
+    const r = await fetchLinkedArticles('中心記事T2', { limit: 10, weights: REV2 })
+    assert.equal(requests.length, 0)
+    assert.ok(!r.links.some((l) => l.title === '漢字記事'))
+  })
+
+  test('補完の問い合わせに失敗しても展開は成功し、補完なしの結果になる', async () => {
+    mockTruncated('中心記事T3', { extra: 'fail' })
+    const r = await fetchLinkedArticles('中心記事T3', { limit: 10, weights: REV2 })
+    const titles = r.links.map((l) => l.title)
+    assert.equal(titles[0], 'X')
+    assert.ok(!titles.includes('漢字記事'))
+    assert.ok(!titles.includes('漢字2'))
+  })
+})
+
 // --- 追加表示(SPEC 6.8) --------------------------------------------------------
 
 /**

@@ -153,10 +153,11 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 [pageviews] 41件を1175msで取得
 ```
 
-`[wikipedia]` の行はチューニングの判断材料になる。「上限打ち切り」が出るなら
-`MAX_CONTINUE`、「morelike一致」が10件を切る警告が頻発するなら `RELATED_LIMIT` や
-並べ替えの方針(SPEC 3.3)を見直す。`[pageviews]` に「失敗N件」が出続けるなら
-`VIEWS_CONCURRENCY` を下げる(叩きすぎで拒否されている)。
+`[wikipedia]` の行はチューニングの判断材料になる。「上限打ち切り」が出た記事では、
+候補に入らなかった冒頭リンクを1回の問い合わせで補い「冒頭リンクN件(うち候補外から追加M件)」と出る
+(SPEC 3.3)。打ち切りが頻発して冒頭以外の取りこぼしも気になるなら `MAX_CONTINUE`、
+「morelike一致」が10件を切る警告が頻発するなら `RELATED_LIMIT` や並べ替えの方針(SPEC 3.3)を見直す。
+`[pageviews]` に「失敗N件」が出続けるなら `VIEWS_CONCURRENCY` を下げる(叩きすぎで拒否されている)。
 「冒頭リンク0件(取得失敗)」が続くなら parse の失敗なので、順位は冒頭の加点なしで出ている。
 重みの調整は `?debug=1` の `console.table`(プール上位20件の m・mutual・lead・score)を見て行う。
 

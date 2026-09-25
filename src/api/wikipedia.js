@@ -32,6 +32,7 @@
 
 import {
   MAX_CONTINUE,
+  LEAD_EXTRA_MAX,
   PAGEVIEW_DAYS,
   POOL_SIZE,
   GUARANTEED_TOP,
@@ -297,6 +298,60 @@ async function fetchLeadLinks(resolvedTitle) {
     if (l && l.ns === 0 && l.title) titles.add(l.title)
   }
   return titles
+}
+
+// action=query の titles に一度に渡せる件数(API の上限。bot でない利用者は50)
+const TITLES_PER_QUERY = 50
+
+/**
+ * 冒頭リンクのうち、打ち切りで候補に入らなかった記事を問い合わせて、候補の素材にする。
+ *
+ * generator=links はリダイレクト解決前の名前のコードポイント順に返すので、
+ * MAX_CONTINUE で打ち切られると漢字で始まる記事がまとめて抜け落ちる
+ * (長嶋茂雄 → 読売ジャイアンツ など)。冒頭リンクはこの上限と無関係に取れているので、
+ * そこから補う。SPEC 3.3
+ *
+ * parse の名前はリダイレクト解決前で、赤リンク(存在しない記事)も混ざる。
+ * 解決に使っている redirects は打ち切られた後ろ側の分を持っていないので、
+ * そのままでは使えない。また相互リンクは generator=links への相乗りで取っているため、
+ * 補う候補の分は別に問い合わせないと分からない(相互リンクなしで足すと、
+ * 冒頭+相互の候補に常に負けて救えない)。1回の query でこれらをまとめて取る。
+ *
+ * @param {string} resolvedTitle 中心記事(解決後)
+ * @param {string[]} titles 候補に無い冒頭リンクの名前
+ * @returns {Promise<{title:string, length:number, mutual:boolean}[]>}
+ */
+async function fetchLeadExtras(resolvedTitle, titles) {
+  const chunks = []
+  for (let i = 0; i < titles.length; i += TITLES_PER_QUERY) {
+    chunks.push(titles.slice(i, i + TITLES_PER_QUERY))
+  }
+  const responses = await Promise.all(
+    chunks.map((chunk) =>
+      apiGet({
+        action: 'query',
+        titles: chunk.join('|'),
+        redirects: '1',
+        prop: 'info|links',
+        pltitles: resolvedTitle,
+        pllimit: 'max',
+      })
+    )
+  )
+  // 複数の名前が同じ記事に解決されることがあるので、解決後の名前で1件にまとめる
+  const found = new Map()
+  for (const data of responses) {
+    for (const page of (data.query && data.query.pages) || []) {
+      if (!page.title || page.missing || page.invalid || page.ns !== 0) continue
+      if (found.has(page.title)) continue
+      found.set(page.title, {
+        title: page.title,
+        length: page.length || 0,
+        mutual: Array.isArray(page.links) && page.links.length > 0,
+      })
+    }
+  }
+  return Array.from(found.values())
 }
 
 // ---------------------------------------------------------------------------
@@ -713,18 +768,49 @@ export async function fetchLinkedArticles(title, options = {}) {
     for (const t of leadRaw) leadSet.add(redirects.get(t) || t)
   }
 
+  // --- 打ち切りで漏れた冒頭リンクを候補に補う(SPEC 3.3) ---
+  // 打ち切りが無ければ冒頭リンクは必ず候補に含まれる(冒頭のリンクは本文のリンクの一部で、
+  // リダイレクトも同じ応答で解決済み)ので、問い合わせない
+  let extras = []
+  let extrasFailed = false
+  if (reachedLimit && leadRaw) {
+    const known = new Set(candidates.map((c) => c.title))
+    const missing = Array.from(leadSet).filter((t) => t !== center.title && !known.has(t))
+    if (missing.length > 0) {
+      const found = await optional(
+        fetchLeadExtras(center.title, missing.slice(0, LEAD_EXTRA_MAX)),
+        '候補外の冒頭リンク',
+        null
+      )
+      if (found) {
+        // リダイレクト解決後に既存の候補と同じ記事になったものは足さない
+        extras = found.filter((c) => c.title !== center.title && !known.has(c.title))
+        for (const c of extras) {
+          leadSet.add(c.title)
+          if (c.mutual) mutual.add(c.title)
+        }
+      } else {
+        extrasFailed = true
+      }
+    }
+  }
+
   // --- 除外フィルタと素材づくり ---
   let excludedByTitle = 0
   let related = 0
   let mutualCount = 0
   let leadCount = 0
+  let extraCount = 0
+  const extraSet = new Set(extras)
   const materials = []
-  for (const c of candidates) {
+  for (const c of candidates.concat(extras)) {
     if (c.title === center.title) continue
     if (isExcludedTitle(c.title)) {
       excludedByTitle += 1
       continue
     }
+    // 補った候補も morelike の順位は同じように引く
+    // (morelike はリンクの有無と無関係に返るので、補った候補にも順位がありうる)
     const rank = ranks.get(c.title)
     const m = {
       title: c.title,
@@ -733,6 +819,7 @@ export async function fetchLinkedArticles(title, options = {}) {
       mutual: mutual.has(c.title) ? 1 : 0,
       lead: leadSet.has(c.title) ? 1 : 0,
     }
+    if (extraSet.has(c)) extraCount += 1
     if (m.rank !== null) related += 1
     mutualCount += m.mutual
     leadCount += m.lead
@@ -748,6 +835,12 @@ export async function fetchLinkedArticles(title, options = {}) {
   const picked = pickLinks(pool, limit, randomFor(center.title))
   const elapsed = Math.round(performance.now() - startedAt)
 
+  // 冒頭リンクの件数には補った分も含める(候補のうち lead=1 の件数、という意味を保つ)
+  let leadNote = ''
+  if (!leadRaw) leadNote = '(取得失敗)'
+  else if (extrasFailed) leadNote = '(候補外の補完に失敗)'
+  else if (extraCount > 0) leadNote = `(うち候補外から追加${extraCount}件)`
+
   console.info(
     '[wikipedia] %s: %dms / リンク先%d件(%d回取得%s) / 除外: 日付等%d件 / ' +
       'morelike一致%d件 / 相互リンク%d件 / 冒頭リンク%d件%s / ' +
@@ -761,7 +854,7 @@ export async function fetchLinkedArticles(title, options = {}) {
     related,
     mutualCount,
     leadCount,
-    leadRaw ? '' : '(取得失敗)',
+    leadNote,
     countOutsideMorelike(pool),
     pool.length,
     picked.length
