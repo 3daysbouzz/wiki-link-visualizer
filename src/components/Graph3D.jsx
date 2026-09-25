@@ -63,6 +63,9 @@ import {
   LABEL_FADE_SHOW,
   LABEL_FADE_KEEP,
   LABEL_KEEP_BIAS,
+  LABEL_SWAP_S,
+  LABEL_OVERLAP_FAINT,
+  LABEL_FAINT_MAX,
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
@@ -865,6 +868,8 @@ const Graph3D = forwardRef(function Graph3D(
       return Array.from(ctx.nodes.values()).map((n) => ({
         id: n.id,
         tier: n.tier,
+        // selected = 今回選ばれた(表示の目標)。visible は出入りのフェード中も true
+        selected: n.labelShowTarget > 0,
         visible: !!(n.label && n.label.visible),
         delta: Math.round((depthOf(n) - base) * 10) / 10,
         fade: Math.round(n.labelFade * 1000) / 1000,
@@ -1093,6 +1098,9 @@ function syncGraph(ctx, graphData, currentId) {
         // ラベルの深さフェード(SPEC 6.3)。labelFade は補間後、labelFadeTarget は毎フレームの目標
         labelFade: 1,
         labelFadeTarget: 1,
+        // ラベルの出入り(選ばれた / 選ばれなくなった)のフェード。labelShowTarget は選ばれていれば 1
+        labelShow: 0,
+        labelShowTarget: 0,
       }
       spawnPosition(ctx, node)
       const material = new THREE.SpriteMaterial({
@@ -1307,6 +1315,8 @@ function updateVisuals(ctx, t, dt) {
   const k = 1 - Math.exp(-dt / (HOVER_TRANSITION_S / 3))
 
   updateDepthFadeTargets(ctx)
+  const swapFade = ctx.visual.labelDepthFade
+  const kSwap = 1 - Math.exp(-dt / (LABEL_SWAP_S / 3))
 
   // 取得中のノードの脈動。関連記事の取得には数秒かかることがあるので、
   // クリックしたノード自身を動かして「今これを取りに行っている」ことを示す
@@ -1324,6 +1334,14 @@ function updateVisuals(ctx, t, dt) {
     v.opacity += (g.opacity - v.opacity) * k
     v.labelBright += (g.labelBright - v.labelBright) * k
     node.labelFade += (node.labelFadeTarget - node.labelFade) * k
+    // ラベルの出入り。深さフェードが有効なときは LABEL_SWAP_S をかけて出し入れし、
+    // 無効なとき(current)は従来どおり即座に切り替える
+    if (swapFade) {
+      node.labelShow += (node.labelShowTarget - node.labelShow) * kSwap
+      if (node.label) node.label.visible = node.labelShowTarget > 0 || node.labelShow > 0.01
+    } else {
+      node.labelShow = node.labelShowTarget
+    }
 
     let px = node.basePx
     if (node.isCurrent) {
@@ -1340,7 +1358,7 @@ function updateVisuals(ctx, t, dt) {
     if (node.label) {
       node.label.material.color.copy(LABEL_BASE_COLOR).lerp(LABEL_HOVER_COLOR_OBJ, v.labelBright)
       // ホバーの減光などの不透明度に、深さフェードを掛ける
-      node.label.material.opacity = v.opacity * node.labelFade
+      node.label.material.opacity = v.opacity * node.labelFade * node.labelShow
     }
   }
 
@@ -1556,9 +1574,12 @@ function updateLabelVisibility(ctx) {
   const fadeOn = ctx.visual.labelDepthFade
   for (const node of ctx.nodes.values()) {
     if (!node.label) continue
-    // 前回表示していたか(新たに出すラベルをフェードインさせるのと、候補の基準を分けるため)
-    node._wasLabelVisible = node.label.visible
-    node.label.visible = false
+    // 前回選ばれていたか(候補の基準を分けるのと、表示中のラベルを優遇するため)。
+    // 出入りのフェード中は label.visible が true のまま薄れていくので、visible ではなく選ばれたかで見る
+    node._wasLabelVisible = node.labelShowTarget > 0
+    node.labelShowTarget = 0
+    // 出入りのフェードが無効なら従来どおり即座に隠す(有効なら updateVisuals が薄れさせてから隠す)
+    if (!fadeOn) node.label.visible = false
     // 表示しなかった理由(デバッグ用。window.__viz.labels() で見る)
     node._labelReason = 'rank'
 
@@ -1616,9 +1637,20 @@ function updateLabelVisibility(ctx) {
 
   const rects = []
   let shown = 0
+  let faintShown = 0
 
   for (const node of considered) {
-    if (shown >= ctx.visual.visibleLabels) break
+    // 深さフェードで十分に薄い奥のラベル(SPEC 6.3)。重なり判定をせず、場所も取らず、
+    // VISIBLE_LABELS とは別枠(LABEL_FAINT_MAX)で出す。現在地・ホバー中は対象外
+    const faint =
+      fadeOn &&
+      !node.isCurrent &&
+      node.id !== hoveredId &&
+      node.labelFadeTarget <= LABEL_OVERLAP_FAINT
+    if (faint ? faintShown >= LABEL_FAINT_MAX : shown >= ctx.visual.visibleLabels) {
+      if (!faint && faintShown >= LABEL_FAINT_MAX) break
+      continue
+    }
 
     displayPosition(ctx, node, _v1)
     _v1.project(camera) // 以降 _v1 はNDC座標
@@ -1650,6 +1682,14 @@ function updateLabelVisibility(ctx) {
       rect = { x1: sx - r - labelW, x2: sx - r, y1: sy - labelH / 2, y2: sy + labelH / 2 }
     }
 
+    if (faint) {
+      node._labelReason = 'faint'
+      node.labelShowTarget = 1
+      label.visible = true
+      faintShown += 1
+      continue
+    }
+
     const overlaps = rects.some(
       (o) => !(rect.x2 < o.x1 || rect.x1 > o.x2 || rect.y2 < o.y1 || rect.y1 > o.y2)
     )
@@ -1660,11 +1700,10 @@ function updateLabelVisibility(ctx) {
 
     node._labelReason = 'shown'
     rects.push(rect)
+    // 新たに選ばれたラベルは labelShow が 0 付近から上がる(フェードが有効なとき)ので浮かび上がる
+    node.labelShowTarget = 1
     label.visible = true
     shown += 1
-    // 新たに出すラベルは不透明度 0 からフェードインさせる(深さフェードが有効なときだけ。
-    // 無効なときは従来どおり即座に出す)
-    if (fadeOn && !node._wasLabelVisible) node.labelFade = 0
   }
 }
 
