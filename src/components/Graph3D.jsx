@@ -55,6 +55,10 @@ import {
   SIM_STEPS_PER_SEC,
   SIM_MAX_STEPS_PER_FRAME,
   SPAWN_SPREAD,
+  MORE_SHAKE_MS,
+  MORE_SHAKE_PX,
+  MORE_SHAKE_CYCLES,
+  MORE_SPAWN_JITTER,
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
@@ -204,10 +208,16 @@ function worldPerPx(ctx, depth) {
   return depth * ctx.pxToSprite
 }
 
-/** ノードの描画位置(レイアウト座標 + レイヤーごとのドリフト) */
+/**
+ * ノードの描画位置(レイアウト座標 + レイヤーごとのドリフト)。
+ * 震えている最中のノード(追加表示の演出)はその揺れも足す。
+ * レイアウト座標そのものは動かさない(揺らすと力学の計算が乱れるため)
+ */
 function displayPosition(ctx, node, out) {
   const drift = node.layer === 'back' ? ctx.driftBack : ctx.driftFront
-  return out.set(node.x + drift.x, node.y + drift.y, node.z + drift.z)
+  out.set(node.x + drift.x, node.y + drift.y, node.z + drift.z)
+  if (ctx.shake && ctx.shake.id === node.id) out.add(ctx.shakeOffset)
+  return out
 }
 
 const Graph3D = forwardRef(function Graph3D(
@@ -452,6 +462,14 @@ const Graph3D = forwardRef(function Graph3D(
       viewportHeight: 0,
       driftBack: new THREE.Vector3(),
       driftFront: new THREE.Vector3(),
+      // 追加表示の演出(SPEC 6.8)
+      // shake: 震わせているノード { id, start, amp } / shakeOffset: 今フレームの揺れ
+      shake: null,
+      shakeOffset: new THREE.Vector3(),
+      // 記事名 => 出現させる元のノードid。次の syncGraph で新規ノードをそこから生やす
+      pendingSpawn: new Map(),
+      // 記事名 => ラベルの優先表示を終える時刻(performance.now)
+      labelBoost: new Map(),
       pointer: new THREE.Vector2(),
     }
     ctxRef.current = ctx
@@ -549,6 +567,10 @@ const Graph3D = forwardRef(function Graph3D(
         const d = Math.hypot(sx - px, sy - py)
         const hitRadius = Math.max(HIT_RADIUS_PX, node.basePx * node.vis.scale)
         if (d > hitRadius) continue
+        // 現在地の球そのもの(描画半径の内側)を押したときは現在地を優先する。
+        // 追加表示(SPEC 6.8)の直後は新しいノードが現在地の位置から生えて重なっているので、
+        // 近さだけで選ぶと、続けて中心を押したつもりが新しいノードへ進んでしまう
+        if (node.isCurrent && d <= node.basePx * node.vis.scale) return node
         // より近い(重なっているときは手前の)ノードを優先する
         if (d < bestDist - 2 || (Math.abs(d - bestDist) <= 2 && depth < bestDepth)) {
           best = node
@@ -643,6 +665,7 @@ const Graph3D = forwardRef(function Graph3D(
       // 上限で打ち切った分は捨てる(タブ復帰直後に一気に進んで飛ぶのを防ぐ)
       if (ctx.simAccumulator >= stepDt) ctx.simAccumulator = 0
       updateDrift(ctx, t)
+      updateShake(ctx, now)
       updateVisuals(ctx, t, dt)
       updatePositions(ctx)
       updateGrid(ctx, t)
@@ -803,6 +826,22 @@ const Graph3D = forwardRef(function Graph3D(
     },
 
     /**
+     * ノードの画面上の位置(canvas 内の px)を返す(デバッグ用)。
+     * クリック操作を機械的に確かめるときに、狙うノードの座標を得るために使う
+     */
+    getScreenPosition(id) {
+      const ctx = ctxRef.current
+      const node = ctx && ctx.nodes.get(id)
+      if (!node) return null
+      const el = ctx.renderer.domElement
+      displayPosition(ctx, node, _v1).project(ctx.camera)
+      return {
+        x: Math.round((_v1.x * 0.5 + 0.5) * el.clientWidth),
+        y: Math.round((-_v1.y * 0.5 + 0.5) * el.clientHeight),
+      }
+    },
+
+    /**
      * レイアウト計算を同期的に n ステップ進める(デバッグ用)。
      * 描画のフレームに関係なく決まった回数だけ進められるので、
      * 環境が違っても「同じ回数進めた結果」を比較できる
@@ -896,6 +935,35 @@ const Graph3D = forwardRef(function Graph3D(
       })
     },
 
+    /**
+     * ノードを短く震わせる(追加表示の瞬間。SPEC 6.8)。
+     * ratio は振幅の倍率(上限に達して追加できないときは小さく震わせる)
+     */
+    shakeNode(id, ratio = 1) {
+      const ctx = ctxRef.current
+      if (!ctx || !ctx.nodes.has(id)) return
+      ctx.shake = { id, start: performance.now(), amp: MORE_SHAKE_PX * ratio }
+    },
+
+    /**
+     * 次のグラフ更新で新しく現れるノード ids を、originId の位置から出現させる。
+     * graphData を更新する前に呼ぶこと。合わせてシミュレーションを再加熱し、外へ広がらせる
+     */
+    spawnFrom(originId, ids) {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      for (const id of ids) ctx.pendingSpawn.set(id, originId)
+    },
+
+    /** ラベルを ms の間、優先して表示する(何が増えたか読めるように) */
+    boostLabels(ids, ms) {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      const until = performance.now() + ms
+      for (const id of ids) ctx.labelBoost.set(id, until)
+      updateLabelVisibility(ctx)
+    },
+
     zoomIn() {
       this.zoomBy(1 / ZOOM_STEP)
     },
@@ -914,6 +982,16 @@ const Graph3D = forwardRef(function Graph3D(
 /** ノードの初期位置を (seed, 記事名) から決める */
 function spawnPosition(ctx, node) {
   const random = seededRandom(ctx.seed, node.id)
+  // 追加表示で足したノードは現在地から生やす(SPEC 6.8)。
+  // 現在地の位置はその時点のレイアウト次第なので、この場合の配置は URL から再現できない
+  // (追加分は URL に保存しない仕様なので、経路の復元には影響しない)
+  const origin = ctx.nodes.get(ctx.pendingSpawn.get(node.id))
+  if (origin) {
+    node.x = origin.x + (random() - 0.5) * MORE_SPAWN_JITTER
+    node.y = origin.y + (random() - 0.5) * MORE_SPAWN_JITTER
+    node.z = origin.z + (random() - 0.5) * MORE_SPAWN_JITTER
+    return
+  }
   node.x = (random() - 0.5) * SPAWN_SPREAD
   node.y = (random() - 0.5) * SPAWN_SPREAD
   node.z = (random() - 0.5) * SPAWN_SPREAD
@@ -1069,6 +1147,9 @@ function syncGraph(ctx, graphData, currentId) {
   }
   rebuildEdgeGeometry(ctx.edgeSolid, ctx.links.filter((l) => l.primary).length)
   rebuildEdgeGeometry(ctx.edgeDashed, ctx.links.filter((l) => !l.primary).length)
+
+  // 出現位置の指定は今回の同期で使い切る(残すと後の再表示まで現在地から生えてしまう)
+  ctx.pendingSpawn.clear()
 
   // 遷移中に目的地が消えた(再検索など)ら遷移状態を捨てる
   if (ctx.travel && !ctx.nodes.has(ctx.travel.id)) ctx.travel = null
@@ -1238,6 +1319,27 @@ function updateDrift(ctx, t) {
 }
 
 // ==========================================================================
+// 追加表示の震え (SPEC 6.8)
+// 画面の左右方向に、減衰しながら MORE_SHAKE_CYCLES 回往復させる。
+// 振幅は px 指定なので、ドリフトと同じく注視点までの距離でワールド座標に換算する
+// ==========================================================================
+function updateShake(ctx, now) {
+  const shake = ctx.shake
+  if (!shake) return
+  const p = (now - shake.start) / MORE_SHAKE_MS
+  if (p >= 1 || !ctx.nodes.has(shake.id)) {
+    ctx.shake = null
+    ctx.shakeOffset.set(0, 0, 0)
+    return
+  }
+  const depth = ctx.camera.position.distanceTo(ctx.controls.target)
+  const px = shake.amp * (1 - p) * Math.sin(p * MORE_SHAKE_CYCLES * Math.PI * 2)
+  ctx.shakeOffset
+    .setFromMatrixColumn(ctx.camera.matrixWorld, 0) // カメラの右方向
+    .multiplyScalar(px * worldPerPx(ctx, depth))
+}
+
+// ==========================================================================
 // 計算済みの座標をThree.jsのオブジェクトに反映する
 // ==========================================================================
 function updatePositions(ctx) {
@@ -1359,6 +1461,12 @@ function updateLabelVisibility(ctx) {
   const neighbors = hoveredId ? ctx.adjacency.get(hoveredId) : null
   const camera = ctx.camera
 
+  // 追加表示で足したノードは、しばらく一次ノードより先にラベルを出す(SPEC 6.8)
+  const now = performance.now()
+  for (const [id, until] of ctx.labelBoost) {
+    if (until <= now || !ctx.nodes.has(id)) ctx.labelBoost.delete(id)
+  }
+
   // --- 1. 候補を集めて優先度をつける ---
   const candidates = []
   for (const node of ctx.nodes.values()) {
@@ -1373,6 +1481,8 @@ function updateLabelVisibility(ctx) {
       else continue
     } else {
       priority = node.tier
+      // 現在地(0)の次、ほかの一次ノード(1)より前
+      if (node.tier === 1 && ctx.labelBoost.has(node.id)) priority = 0.5
     }
 
     displayPosition(ctx, node, _v1)

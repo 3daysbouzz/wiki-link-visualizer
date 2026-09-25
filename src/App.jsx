@@ -9,6 +9,9 @@ import {
   fetchLinkedArticles,
   fetchPageviews,
   fetchArticleMeta,
+  getMoreLinks,
+  countMoreLinks,
+  moreBudget,
 } from './api/wikipedia.js'
 import { fetchSummary } from './api/summary.js'
 import { PRESETS, coerceConfig } from './config/presets.ts'
@@ -26,6 +29,10 @@ import {
   PACKET_COUNT,
   TRAVEL_MS,
   ZOOM_STEP,
+  MORE_SHAKE_EMPTY_RATIO,
+  MORE_LABEL_BOOST_MS,
+  NOTICE_MS,
+  MORE_HINT_MS,
 } from './constants.js'
 
 /**
@@ -101,6 +108,11 @@ export default function App() {
   const [loadingId, setLoadingId] = useState(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState(null)
+  // 左上のステータス行に数秒だけ出す案内(追加表示の操作説明・上限の通知)
+  const [notice, setNotice] = useState(null)
+  const noticeTimer = useRef(null)
+  // 操作説明は初めてグラフを出したときだけ出す
+  const hintShownRef = useRef(false)
 
   // 画面の形(SPEC 4章)。'short-landscape' | 'narrow' | 'wide'
   // 端末を回すと切り替わる
@@ -128,6 +140,10 @@ export default function App() {
   // 記事id => その記事を展開したときに実際に出したリンク先
   // (抽選結果を覚えておかないと、戻ったときに違う道が現れてしまう)
   const expansions = useRef(new Map())
+  // 記事id => 追加表示の状態 { weights: 展開時の重み, added: これまでに追加した件数 }。
+  // 追加分は重みを展開時のもので並べる(重みの変更は次に展開する記事から効く、と揃える)。
+  // 件数は expansions の長さからは逆算しない(neighborLimit は後から変えられるため)
+  const moreState = useRef(new Map())
   // 記事id => 閲覧数。ノードの大きさに使う。
   // 閲覧数は表示後に少しずつ届くので、届くたびにここへ足してグラフを組み直す
   const viewsOf = useRef(new Map())
@@ -150,8 +166,22 @@ export default function App() {
   const currentId = trail.length > 0 ? trail[trail.length - 1] : null
   const sidebarId = hoveredId || currentId
 
-  const rememberExpansion = (title, links) => {
+  const rememberExpansion = (title, links, weights) => {
     expansions.current.set(title, links)
+    moreState.current.set(title, { weights, added: 0 })
+  }
+
+  const showNotice = (text, ms = NOTICE_MS) => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current)
+    setNotice(text)
+    noticeTimer.current = setTimeout(() => setNotice(null), ms)
+  }
+
+  // 初めてグラフを出したときだけ、中心クリックで増やせることを知らせる
+  const showMoreHint = () => {
+    if (hintShownRef.current) return
+    hintShownRef.current = true
+    showNotice('中心をクリックで関連記事を追加', MORE_HINT_MS)
   }
 
   // 抽選の乱数。(seed, 解決後の記事名) から作るので、同じ設定なら同じ顔ぶれになる
@@ -160,17 +190,18 @@ export default function App() {
 
   // fetchLinkedArticles に渡す共通の設定。呼ぶ時点の最新の config から作るので、
   // 件数・種・重みの変更は「次に展開する記事から」効く(記憶済みの展開結果は変えない)
-  const linkOptions = (assumeCanonical) => {
+  const currentWeights = () => {
     const c = configRef.current
-    return {
-      limit: c.neighborLimit,
-      onProgress: setProgress,
-      assumeCanonical,
-      randomFor,
-      weights: { wMorelike: c.wMorelike, wMutual: c.wMutual, wLead: c.wLead },
-      debug: initialUrlState.debug,
-    }
+    return { wMorelike: c.wMorelike, wMutual: c.wMutual, wLead: c.wLead }
   }
+  const linkOptions = (assumeCanonical) => ({
+    limit: configRef.current.neighborLimit,
+    onProgress: setProgress,
+    assumeCanonical,
+    randomFor,
+    weights: currentWeights(),
+    debug: initialUrlState.debug,
+  })
 
   const rebuild = (nextTrail) =>
     buildGraph(nextTrail, expansions.current, viewsOf.current, configRef.current)
@@ -214,16 +245,47 @@ export default function App() {
   }
 
   // 表示中ノードの閲覧数を裏で取りにいく。届いた順に球が育つ。
-  // 取得は待たない(閲覧数は見た目の補助なので、散歩を止めてまで待つ必要はない)
+  // 散歩は止めない(閲覧数は見た目の補助なので、待つ必要はない)。
+  // 返す Promise は「表示分を取り終えた」合図で、追加表示の先読みの開始に使う
   const loadViews = (titles) => {
     const session = viewsSession.current
     const missing = titles.filter((t) => !viewsOf.current.has(t))
-    if (missing.length === 0) return
-    fetchPageviews(missing, (title, views) => {
+    if (missing.length === 0) return Promise.resolve()
+    return fetchPageviews(missing, (title, views) => {
       if (viewsSession.current !== session) return
       viewsOf.current.set(title, views)
       scheduleRebuild()
     })
+  }
+
+  // --- 追加表示 (SPEC 5章・6.8) ---------------------------------------------
+
+  // 今のグラフに出ている記事。追加分はこれらを除いて選ぶ
+  // (別の枝に既に出ている記事を足しても、線が増えるだけでノードは増えないため)
+  const shownTitles = (trailNow) => new Set(rebuild(trailNow).nodes.map((n) => n.id))
+
+  // 次に追加するリンク(出す件数は上限 moreMax を考慮する)
+  const nextMoreLinks = (title, trailNow) => {
+    const st = moreState.current.get(title)
+    if (!st) return []
+    const c = configRef.current
+    const budget = moreBudget(st.added, c.moreBatch, c.moreMax)
+    return getMoreLinks(title, shownTitles(trailNow), budget, st.weights)
+  }
+
+  // 次に追加する分の閲覧数を裏で取っておく(追加したとき球の大きさがすぐ決まるように)。
+  // 表示分の取得より優先度を下げる(fetchPageviews の low)。
+  // 間に合わなくても追加は待たない。大きさは届いた時点で育つ
+  const prefetchMore = (title) => {
+    const trailNow = trailRef.current
+    if (trailNow[trailNow.length - 1] !== title) return // もう別の記事へ進んでいる
+    const titles = nextMoreLinks(title, trailNow).map((l) => l.title)
+    if (titles.length > 0) fetchPageviews(titles, undefined, { priority: 'low' })
+  }
+
+  // 表示分の閲覧数を取り終えてから、次の追加分を先読みする
+  const loadViewsThenPrefetch = (titles, current) => {
+    loadViews(titles).then(() => prefetchMore(current))
   }
 
   // ======================================================================
@@ -235,16 +297,19 @@ export default function App() {
     setError(null)
     try {
       // ユーザー入力はリダイレクトや表記ゆれの可能性があるので正規化させる
-      const result = await fetchLinkedArticles(title, linkOptions(false))
+      const options = linkOptions(false)
+      const result = await fetchLinkedArticles(title, options)
 
       viewsSession.current += 1
       expansions.current = new Map()
+      moreState.current = new Map()
       viewsOf.current = new Map()
-      rememberExpansion(result.title, result.links)
+      rememberExpansion(result.title, result.links, options.weights)
 
       setHoveredId(null)
       commitTrail([result.title], { immediateCrumb: true })
-      loadViews([result.title, ...result.links.map((l) => l.title)])
+      loadViewsThenPrefetch([result.title, ...result.links.map((l) => l.title)], result.title)
+      showMoreHint()
 
       // レイアウトがある程度落ち着いてから全体を収め、そのあと起点を追う
       setTimeout(() => graphRef.current?.zoomToFit(700), 900)
@@ -262,6 +327,7 @@ export default function App() {
   const handleReset = useCallback(() => {
     viewsSession.current += 1
     expansions.current = new Map()
+    moreState.current = new Map()
     viewsOf.current = new Map()
     setHoveredId(null)
     setError(null)
@@ -281,9 +347,52 @@ export default function App() {
 
       commitTrail(current.slice(0, index + 1))
       travelTo(title)
+      prefetchMore(title)
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [loading]
   )
+
+  // ======================================================================
+  // ノードクリック: そのノードへ進む(訪問済みなら軌跡を遡る)
+  // サイドバーの隣接記事リストからも同じ処理で進む
+  // ======================================================================
+  // ======================================================================
+  // 追加表示: 現在地の関連リンクを、まだ出していない候補からスコア順に足す
+  // (中心ノードのクリックとサイドバーの + MORE が同じ処理を呼ぶ。SPEC 5章・6.8)
+  //
+  // 候補も閲覧数(先読み)も手元にあるので、通信を待たずに即座に足す。
+  // 結果は expansions に追記するので、戻る/進むでも消えない
+  // ======================================================================
+  const handleMore = useCallback(() => {
+    if (loading || travelingRef.current) return
+    const trailNow = trailRef.current
+    const current = trailNow[trailNow.length - 1]
+    const st = current && moreState.current.get(current)
+    if (!st) return
+
+    const links = nextMoreLinks(current, trailNow)
+    if (links.length === 0) {
+      graphRef.current?.shakeNode(current, MORE_SHAKE_EMPTY_RATIO)
+      showNotice('これ以上の関連記事はありません')
+      return
+    }
+
+    const titles = links.map((l) => l.title)
+    expansions.current.set(current, [...(expansions.current.get(current) || []), ...links])
+    st.added += links.length
+
+    // 新しいノードは現在地から生やし、震わせ、しばらくラベルを優先して出す
+    graphRef.current?.spawnFrom(current, titles)
+    graphRef.current?.shakeNode(current, 1)
+    setGraphData(rebuild(trailNow))
+    // グラフに反映されてから(ノードができてから)ラベルの優先を付ける
+    setTimeout(() => graphRef.current?.boostLabels(titles, MORE_LABEL_BOOST_MS), 0)
+
+    // 先読み済みならキャッシュから即座に大きさが決まる。続けて次の分を先読みする
+    loadViewsThenPrefetch(titles, current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
 
   // ======================================================================
   // ノードクリック: そのノードへ進む(訪問済みなら軌跡を遡る)
@@ -293,9 +402,26 @@ export default function App() {
     async (node) => {
       if (loading || travelingRef.current) return
 
+      // 現在地をクリックしたら関連記事を追加する
+      const trailNow = trailRef.current
+      if (trailNow.length > 0 && node.id === trailNow[trailNow.length - 1]) {
+        handleMore()
+        return
+      }
+
       // 既に通った記事をクリックしたら、そこまで引き返す
-      if (trailRef.current.includes(node.id)) {
+      if (trailNow.includes(node.id)) {
         jumpTo(node.id)
+        return
+      }
+
+      // 以前に展開した記事(戻ってから再び進んだ場合など)は、記憶した展開結果を使う。
+      // 取り直すと追加表示した分が消えてしまうため(進む/戻るで顔ぶれを変えない)
+      const stored = expansions.current.get(node.id)
+      if (stored) {
+        commitTrail([...trailNow, node.id])
+        loadViewsThenPrefetch([node.id, ...stored.map((l) => l.title)], node.id)
+        travelTo(node.id)
         return
       }
 
@@ -307,9 +433,10 @@ export default function App() {
       try {
         // グラフ上のノード名はAPIが返したものなので正規化済み。
         // 中心記事の解決を待たずにリンク取得を始められる(往復1回分の短縮)
-        const result = await fetchLinkedArticles(node.id, linkOptions(true))
+        const options = linkOptions(true)
+        const result = await fetchLinkedArticles(node.id, options)
 
-        rememberExpansion(result.title, result.links)
+        rememberExpansion(result.title, result.links, options.weights)
 
         // リダイレクトでタイトルが変わることがあるので、解決後の名前を使う。
         // 既に軌跡上にあるなら、そこを現在地として並べ直す
@@ -317,7 +444,7 @@ export default function App() {
           ...trailRef.current.filter((id) => id !== result.title),
           result.title,
         ])
-        loadViews([result.title, ...result.links.map((l) => l.title)])
+        loadViewsThenPrefetch([result.title, ...result.links.map((l) => l.title)], result.title)
 
         // 新しい現在地へカメラを飛ばす(到着後は追従に引き継がれる)
         travelTo(result.title)
@@ -328,7 +455,7 @@ export default function App() {
         setLoadingId(null)
       }
     },
-    [loading, jumpTo]
+    [loading, jumpTo, handleMore]
   )
 
   // ======================================================================
@@ -392,6 +519,8 @@ export default function App() {
         config: () => configRef.current,
         trail: () => trailRef.current,
         camera: () => graphRef.current?.getCamera() || null,
+        // ノードの画面上の位置(canvas 内の px)。クリックの確認に使う
+        screenOf: (id) => graphRef.current?.getScreenPosition(id) || null,
         // 設定をその場で変える。leva を触らずに挙動を確かめたいときに使う
         // 例: window.__viz.set({ repulsion: 9000 })
         set: (patch) => {
@@ -409,13 +538,15 @@ export default function App() {
       setError(null)
       let nextTrail = []
       try {
-        const first = await fetchLinkedArticles(start, linkOptions(false))
-        rememberExpansion(first.title, first.links)
+        const firstOptions = linkOptions(false)
+        const first = await fetchLinkedArticles(start, firstOptions)
+        rememberExpansion(first.title, first.links, firstOptions.weights)
         nextTrail = [first.title]
 
         for (const step of path) {
-          const r = await fetchLinkedArticles(step, linkOptions(true))
-          rememberExpansion(r.title, r.links)
+          const stepOptions = linkOptions(true)
+          const r = await fetchLinkedArticles(step, stepOptions)
+          rememberExpansion(r.title, r.links, stepOptions.weights)
           nextTrail = [...nextTrail.filter((id) => id !== r.title), r.title]
         }
       } catch (e) {
@@ -431,8 +562,9 @@ export default function App() {
         shown.add(id)
         for (const l of expansions.current.get(id) || []) shown.add(l.title)
       }
-      loadViews(Array.from(shown))
       const last = nextTrail[nextTrail.length - 1]
+      loadViewsThenPrefetch(Array.from(shown), last)
+      showMoreHint()
       setTimeout(() => graphRef.current?.zoomToFit(700), 900)
       setTimeout(() => graphRef.current?.followNode(last), 1700)
     })()
@@ -507,6 +639,7 @@ export default function App() {
       if (rebuildTimer.current) clearTimeout(rebuildTimer.current)
       if (crumbTimer.current) clearTimeout(crumbTimer.current)
       if (travelTimer.current) clearTimeout(travelTimer.current)
+      if (noticeTimer.current) clearTimeout(noticeTimer.current)
     }
   }, [])
 
@@ -528,6 +661,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarId, graphData])
 
+  // サイドバーの + MORE に出す件数: 次に足す件数と、上限までの残り
+  const moreInfo = useMemo(() => {
+    if (!currentId) return null
+    const st = moreState.current.get(currentId)
+    if (!st) return null
+    const available = countMoreLinks(
+      currentId,
+      new Set(graphData.nodes.map((n) => n.id)),
+      st.weights
+    )
+    const rest = Math.min(available, Math.max(0, config.moreMax - st.added))
+    return { next: Math.min(config.moreBatch, rest), rest }
+  }, [currentId, graphData, config.moreBatch, config.moreMax])
+
   const tooManyNodes = graphData.nodes.length > MAX_NODES_WARN
   const isEmpty = trail.length === 0 && !loading
   // グラフが空のときのエラーは左上の小さな行ではなく画面中央に出す
@@ -537,9 +684,11 @@ export default function App() {
     ? `FETCHING${progress > 0 ? ` ${progress}` : ''}`
     : error && !showErrorInCenter
       ? `ERROR ${error}`
-      : tooManyNodes
-        ? 'WARN ノードが増えすぎています。検索し直すと整理できます'
-        : null
+      : notice
+        ? notice
+        : tooManyNodes
+          ? 'WARN ノードが増えすぎています。検索し直すと整理できます'
+          : null
 
   return (
     <div
@@ -608,6 +757,8 @@ export default function App() {
           isCurrent={!!sidebarId && sidebarId === currentId}
           onSelect={handleSidebarSelect}
           disabled={loading}
+          more={moreInfo}
+          onMore={handleMore}
           open={sidebarOpen}
           onToggle={() => setSidebarOpen(false)}
           overlay={isShortLandscape}

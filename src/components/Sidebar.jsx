@@ -17,6 +17,8 @@ function isHttpsUrl(url) {
  * - 取得に失敗しても(null)エラーは出さず、取れなかった項目は「—」にする。
  *   サイドバーは補助機能なので、散歩を止めない
  * - 隣接記事はそのノードの展開結果(expansions)。未展開のノードなら一行案内を出す
+ * - 現在地を出しているときだけ、見出しの横に + MORE(関連記事の追加。SPEC 6.8)を出す。
+ *   ホバー先を出している間は隠す(どの記事に足すのか紛らわしくなるため)
  */
 export default function Sidebar({
   id,
@@ -29,6 +31,8 @@ export default function Sidebar({
   open,
   onToggle,
   overlay,
+  more,
+  onMore,
 }) {
   const dash = '—'
   const fmtNumber = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : dash)
@@ -121,8 +125,30 @@ export default function Sidebar({
       )}
 
       <div className="sidebar-adjacent">
-        <div className="sidebar-label">
-          隣接記事 {adjacent ? `(${adjacent.length})` : ''}
+        <div className="sidebar-adjacent-head">
+          <div className="sidebar-label">
+            隣接記事 {adjacent ? `(${adjacent.length})` : ''}
+          </div>
+          {isCurrent && adjacent && more && (
+            <div className="more-control">
+              <button
+                type="button"
+                className="more-button"
+                onClick={onMore}
+                disabled={disabled || more.next === 0}
+                aria-label={
+                  more.next === 0
+                    ? '追加できる関連記事はありません'
+                    : `関連記事を${more.next}件追加(残り${more.rest}件)`
+                }
+              >
+                + MORE {more.next}
+              </button>
+              <span className="more-rest" aria-hidden="true">
+                REST {more.rest}
+              </span>
+            </div>
+          )}
         </div>
         {adjacent ? (
           <ul className="adjacent-list">

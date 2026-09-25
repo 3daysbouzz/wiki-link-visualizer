@@ -17,7 +17,12 @@ import {
   pickLinks,
   rankCandidates,
   morelikeValue,
+  getMoreLinks,
+  countMoreLinks,
+  moreBudget,
+  fetchPageviews,
 } from '../src/api/wikipedia.js'
+import { VIEWS_CONCURRENCY } from '../src/constants.js'
 import { seededRandom } from '../src/utils/prng.js'
 
 // --- fetch の偽装 ------------------------------------------------------------
@@ -408,5 +413,142 @@ describe('fetchLinkedArticles: 関連スコア', () => {
     })
     const again = await fetchLinkedArticles('中心記事K', { limit: 1, weights: REV2 })
     assert.deepEqual(again.links.map((l) => l.title), ['B'])
+  })
+})
+
+// --- 追加表示(SPEC 6.8) --------------------------------------------------------
+
+/**
+ * 候補が n 件ある記事の展開を偽装する。記事i の morelike 順位は i(= スコア順も i)。
+ * 長さはすべて同じにして、順位だけで並ぶようにする
+ */
+function mockManyLinks(center, n) {
+  mockFetch((params) => {
+    if (params.get('action') === 'parse') return fakeResponse(200, { parse: { links: [] } })
+    if (params.get('generator') === 'links') {
+      return fakeResponse(200, {
+        query: {
+          // わざと逆順で返す(API の並びに依存しないことも確かめる)
+          pages: Array.from({ length: n }, (_, i) => ({ title: `${center}-${n - 1 - i}`, length: 1 })),
+        },
+      })
+    }
+    if (params.get('list') === 'search') {
+      return fakeResponse(200, {
+        query: { search: Array.from({ length: n }, (_, i) => ({ title: `${center}-${i}` })) },
+      })
+    }
+    return fakeResponse(200, { query: { pages: [{ title: center }] } })
+  })
+}
+
+describe('getMoreLinks', () => {
+  test('表示済みを除き、スコア順に count 件返す(抽選しない)', async () => {
+    mockManyLinks('追加A', 30)
+    await fetchLinkedArticles('追加A', { limit: 5, weights: REV2 })
+    // 0〜4 は表示済み、7 もほかの枝で表示済みという想定
+    const shown = ['追加A-0', '追加A-1', '追加A-2', '追加A-3', '追加A-4', '追加A-7']
+    assert.deepEqual(
+      getMoreLinks('追加A', shown, 4, REV2).map((l) => l.title),
+      ['追加A-5', '追加A-6', '追加A-8', '追加A-9']
+    )
+  })
+
+  test('残りが count 件未満ならあるだけ返し、0 件なら空配列', async () => {
+    mockManyLinks('追加B', 6)
+    await fetchLinkedArticles('追加B', { limit: 3, weights: REV2 })
+    const shown = ['追加B-0', '追加B-1', '追加B-2']
+    assert.deepEqual(
+      getMoreLinks('追加B', shown, 8, REV2).map((l) => l.title),
+      ['追加B-3', '追加B-4', '追加B-5']
+    )
+    assert.equal(countMoreLinks('追加B', shown, REV2), 3)
+    const all = [...shown, '追加B-3', '追加B-4', '追加B-5']
+    assert.deepEqual(getMoreLinks('追加B', all, 8, REV2), [])
+    assert.equal(countMoreLinks('追加B', all, REV2), 0)
+  })
+
+  test('中心記事自身は返さない。未取得の記事・count=0 は空配列', async () => {
+    mockManyLinks('追加C', 3)
+    await fetchLinkedArticles('追加C', { limit: 1, weights: REV2 })
+    const titles = getMoreLinks('追加C', [], 10, REV2).map((l) => l.title)
+    assert.ok(!titles.includes('追加C'))
+    assert.deepEqual(getMoreLinks('まだ展開していない記事', [], 8, REV2), [])
+    assert.deepEqual(getMoreLinks('追加C', [], 0, REV2), [])
+  })
+
+  test('同じ入力なら同じ結果(決定論)', async () => {
+    mockManyLinks('追加D', 50)
+    await fetchLinkedArticles('追加D', { limit: 10, weights: REV2 })
+    const shown = new Set(Array.from({ length: 10 }, (_, i) => `追加D-${i * 2}`))
+    const a = getMoreLinks('追加D', shown, 8, REV2)
+    const b = getMoreLinks('追加D', new Set(shown), 8, REV2)
+    assert.deepEqual(a, b)
+  })
+
+  test('上限 moreMax を超えない(8件ずつ足して40件で止まる)', async () => {
+    mockManyLinks('追加E', 150)
+    const first = await fetchLinkedArticles('追加E', { limit: 40, weights: REV2 })
+    const shown = new Set(first.links.map((l) => l.title))
+    let added = 0
+    const sizes = []
+    for (let i = 0; i < 10; i++) {
+      const links = getMoreLinks('追加E', shown, moreBudget(added, 8, 40), REV2)
+      for (const l of links) shown.add(l.title)
+      added += links.length
+      sizes.push(links.length)
+    }
+    assert.deepEqual(sizes, [8, 8, 8, 8, 8, 0, 0, 0, 0, 0])
+    assert.equal(added, 40)
+  })
+
+  test('moreBudget は上限の手前で端数を返し、超えたら 0', () => {
+    assert.equal(moreBudget(0, 8, 40), 8)
+    assert.equal(moreBudget(36, 8, 40), 4)
+    assert.equal(moreBudget(40, 8, 40), 0)
+    assert.equal(moreBudget(45, 8, 40), 0)
+    assert.equal(moreBudget(0, 8, 0), 0)
+  })
+})
+
+// --- 閲覧数の取得行列(表示分を優先し、同時実行数を超えない) ------------------------
+
+describe('fetchPageviews: 優先度と同時実行数', () => {
+  test('表示分(high)と先読み(low)を同時に頼んでも、同時実行数は上限以下で、high が先に始まる', async () => {
+    let active = 0
+    let maxActive = 0
+    const startOrder = []
+    const releases = []
+    globalThis.fetch = (url) => {
+      const title = decodeURIComponent(url.split('/per-article/ja.wikipedia/all-access/user/')[1].split('/')[0])
+      startOrder.push(title)
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      return new Promise((resolve) => {
+        releases.push(() => {
+          active -= 1
+          resolve(fakeResponse(200, { items: [{ views: 1 }] }))
+        })
+      })
+    }
+    const low = Array.from({ length: 10 }, (_, i) => `先読み${i}`)
+    const high = Array.from({ length: 10 }, (_, i) => `表示${i}`)
+    const lowDone = fetchPageviews(low, () => {}, { priority: 'low' })
+    const highDone = fetchPageviews(high, () => {})
+
+    // 応答を1件ずつ返しながら、全部終わるまで回す
+    while (releases.length > 0 || active > 0) {
+      await new Promise((r) => setTimeout(r, 0))
+      const next = releases.shift()
+      if (next) next()
+    }
+    await Promise.all([lowDone, highDone])
+
+    assert.ok(maxActive <= VIEWS_CONCURRENCY, `同時実行 ${maxActive}`)
+    // 先読みが先に頼まれていても、空いた枠は表示分に先に回る
+    const lastHigh = Math.max(...high.map((t) => startOrder.indexOf(t)))
+    const lowStartedAfterHigh = low.filter((t) => startOrder.indexOf(t) > lastHigh).length
+    assert.ok(lowStartedAfterHigh >= low.length - VIEWS_CONCURRENCY)
+    assert.equal(startOrder.length, 20) // 同じ記事を二重に取りにいっていない
   })
 })

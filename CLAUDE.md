@@ -68,7 +68,7 @@ src/
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
     └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking のフォルダに分ける
-tests/                        node:test のユニットテスト(API のエラー処理・抽選・URL 読み取り)
+tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・URL 読み取り)
 ```
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
@@ -87,6 +87,8 @@ tests/                        node:test のユニットテスト(API のエラ�
 
 **抽選結果は `expansions` に記憶する。** リンク選定は呼ぶたびに結果が変わる
 重み付き抽選なので、記憶せずに再構築すると遡ったときに違う道が現れて経路が壊れる。
+追加表示(中心クリック / + MORE。SPEC 6.8)の分も `expansions` の末尾に追記する。
+以前に展開した記事へもう一度進むときは取り直さず、記憶した結果を使う(追加分を消さないため)。
 
 **色は使わない。白の「大きさ・塗り/中空・線種・不透明度」に別々の意味を割り当てる。**
 (2026-09-19 の UI 指示書「Wireframe Terminal」に従う。黒背景に白の階調のみ、

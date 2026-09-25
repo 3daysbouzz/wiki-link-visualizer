@@ -25,6 +25,8 @@ import {
   W_MORELIKE,
   W_MUTUAL,
   W_LEAD,
+  MORE_BATCH,
+  MORE_MAX,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -80,6 +82,10 @@ export interface VizConfig {
   wMutual: number
   /** 冒頭リンク(中心記事のリード文・インフォボックスにある)の加点 */
   wLead: number
+  /** 追加表示(中心クリック / + MORE)1回で足す件数。次に追加するときから効く */
+  moreBatch: number
+  /** 1記事あたりの追加の上限 */
+  moreMax: number
 }
 
 /**
@@ -118,6 +124,8 @@ export const PRESETS: Record<string, VizConfig> = {
     wMorelike: W_MORELIKE,
     wMutual: W_MUTUAL,
     wLead: W_LEAD,
+    moreBatch: MORE_BATCH,
+    moreMax: MORE_MAX,
   },
   // rev2 の既定。current に関連スコアの加点(相互リンク・冒頭リンク)を足したもの。
   // 力学・見た目の値は current と同じ(順位付けの違いだけを比べられるように)
@@ -140,6 +148,8 @@ export const PRESETS: Record<string, VizConfig> = {
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
     ...REV2_RANKING,
+    moreBatch: MORE_BATCH,
+    moreMax: MORE_MAX,
   },
   // ネットワークに見せるための設定(Phase 1 以降で本領を発揮する)
   mesh: {
@@ -161,6 +171,8 @@ export const PRESETS: Record<string, VizConfig> = {
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
     ...REV2_RANKING,
+    moreBatch: MORE_BATCH,
+    moreMax: MORE_MAX,
   },
 }
 
@@ -188,6 +200,8 @@ export const DEFAULT_PRESET = 'rev2'
  *   followLerp     1 でカメラが瞬間移動する。0 だと追従しない
  *   wMorelike 等   0 で その要素を無視。上限 2 は morelike 1位(1.0)の2倍まで。
  *                  それ以上は1つの要素だけで順位が決まり、比べる意味がなくなる
+ *   moreBatch      0 だと追加できない。上限は POOL_SIZE の範囲で一度に出して意味のある量
+ *   moreMax        0 で追加なし。上限は候補プール(POOL_SIZE=150)を超えない
  */
 export const RANGES: Record<string, { min: number; max: number; step?: number }> = {
   nodeLimit: { min: 8, max: 1000 },
@@ -207,6 +221,8 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   wMorelike: { min: 0, max: 2, step: 0.05 },
   wMutual: { min: 0, max: 2, step: 0.05 },
   wLead: { min: 0, max: 2, step: 0.05 },
+  moreBatch: { min: 1, max: 40 },
+  moreMax: { min: 0, max: 150 },
 }
 
 /** 力学に関わる項目。変えたらシミュレーションを再開する(配置は作り直さない) */
@@ -220,8 +236,11 @@ export const LAYOUT_KEYS = [
   'alphaDecay',
 ] as const
 
-/** 関連リンクの順位付けの重み。次に展開する記事から効く */
-export const RANKING_KEYS = ['wMorelike', 'wMutual', 'wLead'] as const
+/**
+ * 関連リンクの順位付けの重みと、追加表示の件数。
+ * 重みは次に展開する記事から、件数は次に追加するときから効く
+ */
+export const RANKING_KEYS = ['wMorelike', 'wMutual', 'wLead', 'moreBatch', 'moreMax'] as const
 
 /** 見た目だけの項目。変えても配置は動かない */
 export const VISUAL_KEYS = [
@@ -318,5 +337,7 @@ export function coerceConfig(
     wMorelike: float(raw.wMorelike, base.wMorelike, r.wMorelike.min, r.wMorelike.max),
     wMutual: float(raw.wMutual, base.wMutual, r.wMutual.min, r.wMutual.max),
     wLead: float(raw.wLead, base.wLead, r.wLead.min, r.wLead.max),
+    moreBatch: int(raw.moreBatch, base.moreBatch, r.moreBatch.min, r.moreBatch.max),
+    moreMax: int(raw.moreMax, base.moreMax, r.moreMax.min, r.moreMax.max),
   }
 }

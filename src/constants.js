@@ -45,6 +45,32 @@ export const W_LEAD = 0
 // ?debug=1 のとき、スコアの内訳を console.table に出す件数
 export const SCORE_DEBUG_ROWS = 20
 
+// --- 関連リンクの追加表示 (SPEC 5章・6.8) ---------------------------------
+// 中心ノードのクリック / サイドバーの + MORE で、まだ出していない候補を
+// スコアの高い順に足す。1回に足す件数と、1記事あたりの上限。
+// VizConfig(presets.ts)にも項目があり、URL と leva から上書きできる。
+// **ここの値は current プリセットの既定値**
+export const MORE_BATCH = 8
+export const MORE_MAX = 40
+
+// 追加の瞬間に現在地ノードを震わせる(「振ると増える」手触りの名残)。
+// 時間(ms)・振幅(画面上の px)・振動の回数。減衰させながら左右に揺らす
+export const MORE_SHAKE_MS = 250
+export const MORE_SHAKE_PX = 5
+export const MORE_SHAKE_CYCLES = 3
+// 上限に達していて足せないときの震えの大きさ(倍率)。「もう出ない」を小さな反応で伝える
+export const MORE_SHAKE_EMPTY_RATIO = 0.4
+// 追加したノードの出現位置を、現在地からどれだけずらすか(ワールド座標)。
+// 完全に同じ座標だと反発力が発散するので、(seed, 記事名) から決まる微小なずれを付ける
+export const MORE_SPAWN_JITTER = 6
+// 追加したノードのラベルを優先表示する時間(ms)。何が増えたか読めるように
+export const MORE_LABEL_BOOST_MS = 3000
+
+// 左上のステータス行に一時的な案内を出す時間(ms)
+export const NOTICE_MS = 3000
+// 初めてグラフを出したときの操作の案内(「中心をクリックで…」)を出す時間(ms)
+export const MORE_HINT_MS = 5000
+
 // リンク先一覧の継続取得の上限回数。1回で最大500件取れるので、
 // 3回=1500件を超えるリンクを持つ記事(「日本」など)はそこで打ち切る
 export const MAX_CONTINUE = 3

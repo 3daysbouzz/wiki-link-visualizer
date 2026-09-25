@@ -373,6 +373,56 @@ async function fetchOnePageviews(title, range) {
   return total
 }
 
+// 閲覧数の取得待ちの行列。表示中のノード(high)を先に、追加表示の先読み(low)を後に取る。
+// 呼び出しごとに作業者を立てると、表示分と先読みが重なったときに同時実行数が
+// VIEWS_CONCURRENCY を超えてしまうので、行列と作業者はアプリ全体で1つにする
+const viewsQueues = { high: [], low: [] }
+// 記事名 => 取得中の job(同じ記事を二重に取りにいかないため)
+const viewsPending = new Map()
+let viewsActive = 0
+
+/** 空いている作業枠の分だけ、high → low の順に行列から取り出して取りにいく */
+function pumpViews() {
+  while (viewsActive < VIEWS_CONCURRENCY) {
+    const job = viewsQueues.high.shift() || viewsQueues.low.shift()
+    if (!job) return
+    viewsActive += 1
+    job.started = true
+    fetchOnePageviews(job.title, job.range)
+      .then((views) => {
+        viewsCache.set(job.title, views)
+        job.resolve(views)
+      })
+      .catch(() => job.resolve(null))
+      .finally(() => {
+        viewsPending.delete(job.title)
+        viewsActive -= 1
+        pumpViews()
+      })
+  }
+}
+
+/** 1記事分の取得を行列に入れる。取得中・待機中なら同じ job を使い回す */
+function enqueueViews(title, range, priority) {
+  let job = viewsPending.get(title)
+  if (job) {
+    // 先読みで待っていた記事が表示されることになったら、先頭側の行列へ移す
+    if (priority === 'high' && !job.started && job.priority === 'low') {
+      viewsQueues.low.splice(viewsQueues.low.indexOf(job), 1)
+      viewsQueues.high.push(job)
+      job.priority = 'high'
+    }
+    return job.promise
+  }
+  job = { title, range, priority, started: false }
+  job.promise = new Promise((resolve) => {
+    job.resolve = resolve
+  })
+  viewsPending.set(title, job)
+  viewsQueues[priority].push(job)
+  return job.promise
+}
+
 /**
  * 複数記事の閲覧数を取り、1件取れるごとに onEach(title, views) を呼ぶ。
  *
@@ -381,46 +431,43 @@ async function fetchOnePageviews(title, range) {
  * 取得済みの記事は即座にキャッシュから返す。
  * 失敗した記事は無視する(閲覧数は見た目の補助なので、取れなくても散歩は続けられる)。
  *
+ * priority='low' は追加表示の先読み用。表示中の取得(high)が残っている間は始めない。
+ *
+ * @param {string[]} titles
+ * @param {(title:string, views:number)=>void} [onEach]
+ * @param {{ priority?: 'high'|'low' }} [options]
  * @returns {Promise<void>} 全件の処理が終わったら解決する
  */
-export async function fetchPageviews(titles, onEach) {
+export async function fetchPageviews(titles, onEach = () => {}, { priority = 'high' } = {}) {
   const range = pageviewRange()
-  const queue = []
+  const waits = []
 
   for (const title of titles) {
     const cached = viewsCache.get(title)
     if (cached !== undefined) {
       onEach(title, cached)
     } else {
-      queue.push(title)
+      waits.push(
+        enqueueViews(title, range, priority).then((views) => ({ title, views }))
+      )
     }
   }
-  if (queue.length === 0) return
+  if (waits.length === 0) return
 
   const startedAt = performance.now()
+  pumpViews()
+  const results = await Promise.all(waits)
   let failed = 0
-
-  const worker = async () => {
-    while (queue.length > 0) {
-      const title = queue.shift()
-      try {
-        const views = await fetchOnePageviews(title, range)
-        viewsCache.set(title, views)
-        onEach(title, views)
-      } catch (e) {
-        failed += 1
-      }
-    }
+  for (const { title, views } of results) {
+    if (views === null) failed += 1
+    else onEach(title, views)
   }
 
-  const workers = []
-  for (let i = 0; i < VIEWS_CONCURRENCY; i++) workers.push(worker())
-  await Promise.all(workers)
-
   console.info(
-    '[pageviews] %d件を%dmsで取得%s',
-    titles.length,
+    '[pageviews] %d件を%dmsで取得%s%s',
+    waits.length,
     Math.round(performance.now() - startedAt),
+    priority === 'low' ? ' (先読み)' : '',
     failed > 0 ? ` (失敗${failed}件)` : ''
   )
 }
@@ -730,6 +777,56 @@ export async function fetchLinkedArticles(title, options = {}) {
   }
 
   return { title: center.title, links: picked.map((c) => ({ title: c.title })) }
+}
+
+// ---------------------------------------------------------------------------
+// 7b. 関連リンクの追加表示 (SPEC 5章・6.8)
+// ---------------------------------------------------------------------------
+
+/**
+ * 候補プールのうち、まだ表示していないものをスコア順に並べて返す。
+ * 抽選はしない(「もう少し見たい」ときは関連の強い順に出す方が期待に合う)。
+ * 追加で Wikipedia には問い合わせない(候補は展開時に linkCache に入っている)。
+ */
+function unshownPool(title, shownTitles, weights) {
+  const cached = linkCache.get(title)
+  if (!cached) return []
+  const shown = shownTitles instanceof Set ? shownTitles : new Set(shownTitles)
+  return buildPool(cached.materials, weights).filter(
+    (c) => c.title !== cached.title && !shown.has(c.title)
+  )
+}
+
+/**
+ * 追加で出すリンクを返す(スコアの高い順に count 件)。
+ * 残りが count 件未満ならあるだけ返し、無ければ空配列。
+ *
+ * @param {string} title 展開済みの記事名(解決後)
+ * @param {Iterable<string>} shownTitles 表示済みの記事名(これらは除く)
+ * @param {number} count 返す件数の上限(moreBudget で上限 moreMax を考慮した値を渡す)
+ * @param {{wMorelike:number, wMutual:number, wLead:number}} [weights]
+ *   その記事を展開したときの重み。今の重みではなく展開時の重みを使うのは、
+ *   「重みの変更は次に展開する記事から効く」(SPEC 3.3)と揃えるため
+ * @returns {{title:string}[]}
+ */
+export function getMoreLinks(title, shownTitles, count, weights = DEFAULT_WEIGHTS) {
+  if (!(count > 0)) return []
+  return unshownPool(title, shownTitles, weights)
+    .slice(0, count)
+    .map((c) => ({ title: c.title }))
+}
+
+/** まだ表示していない候補の件数(上限 moreMax は考慮しない) */
+export function countMoreLinks(title, shownTitles, weights = DEFAULT_WEIGHTS) {
+  return unshownPool(title, shownTitles, weights).length
+}
+
+/**
+ * 今回の追加で出してよい件数。1記事あたりの追加の上限 moreMax を超えないようにする。
+ * @param {number} added その記事にこれまで追加した件数
+ */
+export function moreBudget(added, moreBatch, moreMax) {
+  return Math.max(0, Math.min(moreBatch, moreMax - added))
 }
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import { PRESETS, RANGES } from '../config/presets.ts'
  *
  * 項目は layout(力学)・visual(見た目)・ranking(関連リンクの順位付け)のフォルダに分けている。
  * layout を動かすと配置の計算が再開し、visual は描画だけが変わる(SPEC 12.2)。
- * ranking は次に展開する記事から効く(表示中のノードは変わらない)。
+ * ranking の重みは次に展開する記事から、moreBatch / moreMax は次に追加するときから効く。
  * スライダーの端は presets.ts の RANGES と同じものを使う
  * (パネルと URL で通る値の範囲がずれないようにするため)。
  */
@@ -107,6 +107,8 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
           wMorelike: slider('wMorelike', 'wMorelike', 'morelike 順位の重み'),
           wMutual: slider('wMutual', 'wMutual', '相互リンクの加点。次の展開から効く'),
           wLead: slider('wLead', 'wLead', '冒頭リンクの加点。次の展開から効く'),
+          moreBatch: slider('moreBatch', 'moreBatch', '追加1回で足す件数'),
+          moreMax: slider('moreMax', 'moreMax', '1記事あたりの追加の上限'),
         },
         { collapsed: false }
       ),

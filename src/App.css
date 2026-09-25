@@ -550,7 +550,46 @@ button.breadcrumb-item:disabled {
   flex-direction: column;
 }
 .sidebar-adjacent .sidebar-label {
+  margin-bottom: 0;
+}
+
+/* 隣接記事の見出し行: 左に「隣接記事 (N)」、右に + MORE と残数 */
+.sidebar-adjacent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
+}
+.more-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+/* 角丸・色なし(デザイン規則)。icon-button と同じ枠線の階調に揃える */
+.more-button {
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-input);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.more-button:hover:not(:disabled) {
+  border-color: #fff;
+}
+.more-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.more-rest {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--muted-2);
 }
 
 .adjacent-list {
