@@ -22,10 +22,11 @@ import {
 } from './config/urlState.js'
 import { seededRandom } from './utils/prng.js'
 import { useLayoutMode } from './utils/layoutMode.js'
+import { buildGraph } from './utils/buildGraph.js'
+import { packetRoutesFor } from './utils/relation.js'
 import {
   PREVIEW_DELAY_MS,
   MAX_NODES_WARN,
-  TRAIL_KEEP,
   PACKET_COUNT,
   TRAVEL_MS,
   ZOOM_STEP,
@@ -34,60 +35,6 @@ import {
   NOTICE_MS,
   MORE_HINT_MS,
 } from './constants.js'
-
-/**
- * 訪問した記事の列(trail)から、画面に出すグラフを組み立て直す。
- *
- * グラフを差分で足し引きするのではなく、毎回 trail から作り直している。
- * こうすると「戻る」が trail を短く切るだけで実現でき、
- * 進む/戻るのどちらでも同じ結果になることが保証される。
- *
- * 表示の方針(散歩の軌跡モデル):
- *   - 訪問した記事そのものは消さない … 歩いた軌跡になる
- *   - 直近 TRAIL_KEEP 件の訪問記事は、その子(リンク先)も出す … この先の選択肢
- *   - それより古い訪問記事の子は畳む … 選び終わった選択肢はもう要らない
- */
-function buildGraph(trail, expansions, viewsOf, config) {
-  const nodeMap = new Map()
-  const links = []
-  const linkKeys = new Set()
-  const trailSet = new Set(trail)
-
-  const addNode = (id) => {
-    if (nodeMap.has(id)) return
-    nodeMap.set(id, {
-      id,
-      name: id,
-      views: viewsOf.get(id) || 0,
-      expanded: trailSet.has(id),
-    })
-  }
-
-  const addLink = (source, target) => {
-    if (source === target) return
-    if (linkKeys.has(`${source}->${target}`)) return
-    if (linkKeys.has(`${target}->${source}`)) return
-    linkKeys.add(`${source}->${target}`)
-    links.push({ source, target })
-  }
-
-  // trailEnabled=false なら軌跡を残さず、現在地とその子だけを出す
-  const shown = config.trailEnabled ? trail : trail.slice(-1)
-
-  // 歩いた経路そのもの
-  for (const id of shown) addNode(id)
-  for (let i = 0; i + 1 < shown.length; i++) addLink(shown[i], shown[i + 1])
-
-  // 直近の訪問記事については、その先の選択肢も出す
-  for (const id of shown.slice(-TRAIL_KEEP)) {
-    for (const child of expansions.get(id) || []) {
-      addNode(child.title)
-      addLink(id, child.title)
-    }
-  }
-
-  return { nodes: Array.from(nodeMap.values()), links }
-}
 
 // URL は起動時に一度だけ読む(経路の復元と設定の初期値に使う)
 const initialUrlState = readUrlState()
@@ -524,6 +471,10 @@ export default function App() {
         // ラベルの状態(深さフェードの確認用)と、1フレーム分のラベル処理の時間(ms)
         labels: () => graphRef.current?.getLabelState() || [],
         labelWork: (n) => graphRef.current?.measureLabelWork(n),
+        // 記憶した展開結果({ title, mutual, relScore } の列)と、線ごとの種類・自然長・実際の長さ。
+        // 関連の強さ(SPEC 6.9)が距離に効いているかを確かめるのに使う
+        expansion: (id) => expansions.current.get(id) || null,
+        edges: () => graphRef.current?.getEdgeState() || [],
         // 設定をその場で変える。leva を触らずに挙動を確かめたいときに使う
         // 例: window.__viz.set({ repulsion: 9000 })
         set: (patch) => {
@@ -646,15 +597,15 @@ export default function App() {
     }
   }, [])
 
-  // データパケットを流すエッジ: 現在地の展開結果のうち関連度上位 PACKET_COUNT 件
-  // (expansions は確定枠→抽選枠の順に並んでいるので、先頭が関連度上位)
-  const packetIds = useMemo(() => {
-    if (!currentId) return []
-    return (expansions.current.get(currentId) || [])
-      .slice(0, PACKET_COUNT)
-      .map((l) => l.title)
+  // データパケットを流す経路(SPEC 6.7)。通常は 現在地 → 展開結果のうち関連度上位 PACKET_COUNT 件
+  // (expansions は確定枠→抽選枠の順に並んでいるので、先頭が関連度上位)。
+  // sharedPackets が on で前後の中心に共通ワードがあれば、1つ前の中心 → 共通ワード → 現在地 に流す
+  const packetRoutes = useMemo(
+    () => packetRoutesFor(trail, expansions.current, config, PACKET_COUNT),
     // graphData が変わるたびに(=trail が確定するたびに)取り直す
-  }, [currentId, graphData])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [trail, graphData, config.sharedPackets, config.trailEnabled]
+  )
 
   // サイドバーの隣接記事 = そのノードの展開結果(未展開なら null)
   const sidebarAdjacent = useMemo(() => {
@@ -717,7 +668,7 @@ export default function App() {
             onNodeHover={handleNodeHover}
             currentId={currentId}
             loadingId={loadingId}
-            packetIds={packetIds}
+            packetRoutes={packetRoutes}
             seed={config.seed}
             config={config}
           />

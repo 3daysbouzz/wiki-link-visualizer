@@ -340,3 +340,45 @@ export const SIM_MAX_STEPS_PER_FRAME = 4
 // 新規ノードの初期配置をばらまく範囲(ワールド座標)。
 // (seed, 記事名) から決まるので、同じ種なら同じ場所に生まれる
 export const SPAWN_SPREAD = 120
+
+// --- 関連の強さを配置と動きで見せる (SPEC 6.9・12.2) ------------------------
+// VizConfig(presets.ts)にも項目があり、URL と leva(relation フォルダ)から上書きできる。
+// **ここの値は current プリセットの既定値**。current・rev2・mesh では3つの on/off を
+// すべて off にして従来の配置・見た目を保ち、数値は rev3(すべて on)と共通にしている
+// (on/off だけを切り替えて比べられるように)。
+
+// 関連スコアが高い記事ほど中心の近くに置くか。off なら全部の線が springLength
+export const DISTANCE_BY_SCORE = false
+// 子への線の自然長の範囲。relScore=1(関連が最も強い)で MIN、0 で MAX。
+// springLength(55)の 0.6倍〜1.4倍。狭いと差が見えず、広げすぎると
+// 関連の弱い記事が外側の別の塊に混ざって「どの中心の子か」が読めなくなる
+export const CHILD_SPRING_MIN = 33
+export const CHILD_SPRING_MAX = 77
+// 中心同士(trail edge)の自然長の基準。子の最大(77)の 1.3倍程度にして、
+// 何の手がかりも無い中心同士は子より外側に並べる(「中心同士は大きめ」の要望)
+export const TRAIL_SPRING_BASE = 100
+// 中心同士が相互リンクしているときに縮める量
+export const TRAIL_MUTUAL_BONUS = 15
+// 共通ワード1件あたりに縮める量と、数える上限。
+// 上限 10 件 × 4 = 40 と相互リンクの 15 を足しても 45 で、下限(CHILD_SPRING_MIN)の手前に収まる。
+// 関連が強い中心同士ほど近く、ただし子の最も近い記事よりは内側に入らない
+export const TRAIL_SHARED_BONUS = 4
+export const TRAIL_SHARED_CAP = 10
+
+// 相互リンクの線を太さと脈動で強調するか。off なら従来の描画(LineSegments)のまま
+export const MUTUAL_EMPHASIS = false
+// 相互リンクの線の太さ(通常の線 1px に対する倍率)。
+// 強調の主役は脈動なので控えめにする(利用者との合意は 1.3〜1.5。2026-09-25)。
+// 中心の周りは線が密集するので、太くしすぎると束が塊に見えて1本ずつ追えなくなる
+export const MUTUAL_WIDTH_MULTIPLIER = 1.4
+// 脈動の振幅。明るさが 1 と (1 - 振幅) の間を往復する。
+// 「太さより脈動で強調する」合意(2026-09-25)に合わせ、当初の目安 0.2〜0.3 より大きくした。
+// 小さいとホバーの減光や奥行きの明暗差に紛れる。実際に見て調整する
+export const MUTUAL_PULSE_AMPLITUDE = 0.5
+// 脈動の速さ(ラジアン/秒)。4 で約1.6秒周期。
+// 現在地の呼吸(BREATH_PERIOD_S = 3.2秒)とずらして、別の意味の動きだと分かるようにする
+export const MUTUAL_PULSE_SPEED = 4
+
+// 1つ前の中心と今の中心に共通する関連ワードがあるとき、パケットを
+// 前の中心 → 共通ワード → 今の中心 に流すか(SPEC 6.7)。off なら従来どおり 今の中心 → 子
+export const SHARED_PACKETS = false

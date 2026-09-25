@@ -67,12 +67,14 @@ src/
     ├── Sidebar.jsx           右サイドバー(記事名・メタ・抜粋・隣接記事)
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
-    └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking のフォルダに分ける
-tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り)
+    └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける
+tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ)
 ```
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
 `src/utils/depthFade.js`(ラベルの深さフェードの計算)は SPEC 6.3。
+`src/utils/buildGraph.js`(trail からグラフを組み立てる)は SPEC 7章、
+`src/utils/relation.js`(関連の強さを配置と動きで見せる計算。rev3)は SPEC 6.9。
 
 `index.html` で Google Fonts(Space Grotesk / JetBrains Mono)を `<link>` で読む。
 これは npm 依存ではないので上の「依存を増やさない」には抵触しない。
@@ -82,13 +84,14 @@ tests/                        node:test のユニットテスト(API のエラ�
 **数値のチューニングは `src/constants.js` だけで完結させる。**
 マジックナンバーをコンポーネントに直接書かない。
 
-**グラフは差分で足し引きせず、毎回 `trail`(訪問した記事の列)から組み立て直す。**
+**グラフは差分で足し引きせず、毎回 `trail`(訪問した記事の列)から組み立て直す**(`buildGraph`)。
 これにより「戻る」が trail を短く切るだけで済み、進む／戻るのどちらでも
 同じ結果になることが保証される。この方式を崩さないこと。
 
 **抽選結果は `expansions` に記憶する。** リンク選定は呼ぶたびに結果が変わる
 重み付き抽選なので、記憶せずに再構築すると遡ったときに違う道が現れて経路が壊れる。
 追加表示(中心クリック / + MORE。SPEC 6.8)の分も `expansions` の末尾に追記する。
+各リンクは `{ title, mutual, relScore }`。`relScore` は展開したときの重みで 0〜1 にならして保存する(SPEC 3.3)。
 以前に展開した記事へもう一度進むときは取り直さず、記憶した結果を使う(追加分を消さないため)。
 
 **色は使わない。白の「大きさ・塗り/中空・線種・不透明度」に別々の意味を割り当てる。**
@@ -102,6 +105,7 @@ tests/                        node:test のユニットテスト(API のエラ�
 - 線種 = 起点につながる線は実線、それ以外は破線
 - 不透明度 = 奥のもの(二次ノード・破線)ほど薄い
 - 現在地 = 最大の球 + 呼吸する外周リング
+- 脈動 = 相互リンクの線(rev3 の `mutualEmphasis`。SPEC 6.9)。ほかの意味に使わない
 
 両方に同じ意味を持たせない。大きさは**画面上のピクセル**で指定する
 (`Sprite` の `sizeAttenuation:false`。カメラ距離で見た目が変わらない)。

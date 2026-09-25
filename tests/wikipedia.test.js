@@ -414,6 +414,27 @@ describe('fetchLinkedArticles: 関連スコア', () => {
     const again = await fetchLinkedArticles('中心記事K', { limit: 1, weights: REV2 })
     assert.deepEqual(again.links.map((l) => l.title), ['B'])
   })
+
+  test('返すリンクに mutual と relScore(展開時の重みで 0〜1 にならしたスコア)が付く(SPEC 6.9)', async () => {
+    mockArticle('中心記事S')
+    const r = await fetchLinkedArticles('中心記事S', { limit: 3, weights: REV2 })
+    const byTitle = Object.fromEntries(r.links.map((l) => [l.title, l]))
+    const total = REV2.wMorelike + REV2.wMutual + REV2.wLead
+    // B: 相互リンク + 冒頭リンク(morelike 圏外)
+    assert.equal(byTitle.B.mutual, 1)
+    assert.ok(Math.abs(byTitle.B.relScore - (REV2.wMutual + REV2.wLead) / total) < 1e-9)
+    // A: morelike 1位(m=1)だけ
+    assert.equal(byTitle.A.mutual, 0)
+    assert.ok(Math.abs(byTitle.A.relScore - REV2.wMorelike / total) < 1e-9)
+    // C: 手がかりなし
+    assert.equal(byTitle.C.relScore, 0)
+
+    // 追加表示の分も同じ形で返る
+    const more = getMoreLinks('中心記事S', ['B', 'A'], 5, REV2)
+    assert.deepEqual(more.map((l) => l.title), ['C'])
+    assert.equal(more[0].mutual, 0)
+    assert.equal(more[0].relScore, 0)
+  })
 })
 
 // --- 打ち切りで漏れた冒頭リンクの補完(SPEC 3.3) ------------------------------------

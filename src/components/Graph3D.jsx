@@ -1,6 +1,10 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+// 太い線(相互リンクの強調。SPEC 6.9)。three 本体に同梱のもので、依存は増えない
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { seededRandom } from '../utils/prng.js'
 import {
   depthFadeOf,
@@ -75,6 +79,7 @@ import {
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
+import { computeEdgeSpringLength, mutualPulseFactor } from '../utils/relation.js'
 
 /**
  * Three.js本体のみで実装した3Dグラフ描画コンポーネント。
@@ -91,6 +96,7 @@ import { isMobileViewport } from '../utils/layoutMode.js'
  *   塗り/中空 = 未訪問は白塗り、訪問済み(軌跡上)は白い輪郭だけ
  *   線種     = 起点につながる線は実線、それ以外は破線
  *   不透明度 = 奥のもの(二次)ほど薄い
+ *   脈動     = 相互リンクの線(rev3 の mutualEmphasis。SPEC 6.9)
  *
  * ノードとラベルは Sprite(sizeAttenuation:false)で描く。
  * こうするとカメラ距離に関係なく画面上のピクセル数で大きさを決められるので、
@@ -129,6 +135,7 @@ const _v2 = new THREE.Vector3()
 const _v3 = new THREE.Vector3()
 const _forward = new THREE.Vector3()
 const _color = new THREE.Color()
+const _resolution = new THREE.Vector2()
 const LABEL_BASE_COLOR = new THREE.Color(LABEL_COLOR)
 const LABEL_HOVER_COLOR_OBJ = new THREE.Color(LABEL_HOVER_COLOR)
 
@@ -235,7 +242,7 @@ function displayPosition(ctx, node, out) {
 }
 
 const Graph3D = forwardRef(function Graph3D(
-  { graphData, onNodeClick, onNodeHover, currentId, loadingId, packetIds, seed = 1, config },
+  { graphData, onNodeClick, onNodeHover, currentId, loadingId, packetRoutes, seed = 1, config },
   ref
 ) {
   const containerRef = useRef(null)
@@ -343,6 +350,31 @@ const Graph3D = forwardRef(function Graph3D(
     const edgeSolid = makeEdgeMesh(solidMaterial)
     const edgeDashed = makeEdgeMesh(dashedMaterial)
 
+    // 相互リンクを強調するときだけ使う太い線(SPEC 6.9)。実線・破線の区別はそのまま保つ。
+    // WebGL の通常の線は常に 1 デバイスピクセルで太さを変えられないので、
+    // 線を細長い四角形として描く LineSegments2 を使う。
+    // resolution に描画バッファの大きさ(デバイスピクセル)を渡すので、linewidth は
+    // 「通常の線(1 デバイスピクセル)の何倍か」がそのまま入る(resize で更新する)
+    const wideSolidMaterial = new LineMaterial({ vertexColors: true, linewidth: 1 })
+    const wideDashedMaterial = new LineMaterial({
+      vertexColors: true,
+      linewidth: 1,
+      dashed: true,
+      dashSize: EDGE_DASH_SIZE,
+      gapSize: EDGE_GAP_SIZE,
+    })
+    const makeWideEdgeMesh = (material) => {
+      const mesh = new LineSegments2(new LineSegmentsGeometry(), material)
+      // 座標は毎フレーム配列へ直接書くので、境界球が古いまま画面外と判定されないようにする
+      mesh.frustumCulled = false
+      mesh.renderOrder = -5
+      mesh.visible = false
+      scene.add(mesh)
+      return mesh
+    }
+    const wideSolid = makeWideEdgeMesh(wideSolidMaterial)
+    const wideDashed = makeWideEdgeMesh(wideDashedMaterial)
+
     // ---- 起点の外周リング ----
     const ringMaterial = new THREE.SpriteMaterial({
       map: ringTexture,
@@ -435,10 +467,17 @@ const Graph3D = forwardRef(function Graph3D(
       edgeDashed,
       solidMaterial,
       dashedMaterial,
+      wideSolid,
+      wideDashed,
+      wideSolidMaterial,
+      wideDashedMaterial,
+      // 相互リンクの線の明るさに掛ける値(脈動)。updateVisuals が毎フレーム決める
+      mutualPulse: 1,
       ring,
       ringMaterial,
       packets,
-      packetIds: [],
+      // データパケットを流す経路(記事名の列)。App の packetRoutesFor が決める(SPEC 6.7)
+      packetRoutes: [],
       grid,
       radials,
       gridMaterials,
@@ -512,6 +551,11 @@ const Graph3D = forwardRef(function Graph3D(
         renderer.setPixelRatio(nextRatio)
       }
       renderer.setSize(container.clientWidth, container.clientHeight)
+      // 太い線の太さの基準。描画バッファ(デバイスピクセル)の大きさにしておくと、
+      // linewidth が通常の線(1 デバイスピクセル)に対する倍率になる
+      renderer.getDrawingBufferSize(_resolution)
+      wideSolidMaterial.resolution.copy(_resolution)
+      wideDashedMaterial.resolution.copy(_resolution)
 
       // --- 高さが変わったら、見た目の縮尺を保つようカメラを前後させる ---
       // カメラの画角は「縦」で決まっているので、描画領域の高さが変われば
@@ -734,6 +778,10 @@ const Graph3D = forwardRef(function Graph3D(
       edgeDashed.geometry.dispose()
       solidMaterial.dispose()
       dashedMaterial.dispose()
+      wideSolid.geometry.dispose()
+      wideDashed.geometry.dispose()
+      wideSolidMaterial.dispose()
+      wideDashedMaterial.dispose()
       renderer.dispose()
       if (el.parentNode) el.parentNode.removeChild(el)
 
@@ -761,8 +809,8 @@ const Graph3D = forwardRef(function Graph3D(
 
   useEffect(() => {
     const ctx = ctxRef.current
-    if (ctx) ctx.packetIds = packetIds || []
-  }, [packetIds])
+    if (ctx) ctx.packetRoutes = packetRoutes || []
+  }, [packetRoutes])
 
   // 種が変わったら全ノードを配置し直す(比較のために「同じ配置」を作り直せるように)
   useEffect(() => {
@@ -794,6 +842,8 @@ const Graph3D = forwardRef(function Graph3D(
     const ctx = ctxRef.current
     if (!ctx) return
     ctx.layout = layoutOf(config)
+    // 線ごとの自然長は距離の設定(SPEC 6.9)で変わるので、ここで計算し直す
+    for (const link of ctx.links) link.springLength = computeEdgeSpringLength(link, ctx.layout)
     ctx.alpha = 1 // 位置はそのまま。止まっていた計算を動かし直す
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutSignature])
@@ -803,7 +853,11 @@ const Graph3D = forwardRef(function Graph3D(
   useEffect(() => {
     const ctx = ctxRef.current
     if (!ctx) return
+    const wasEmphasis = ctx.visual.mutualEmphasis
     ctx.visual = visualOf(config)
+    // 相互リンクの強調を切り替えたら、線をどのメッシュで描くかを振り分け直す
+    if (ctx.visual.mutualEmphasis !== wasEmphasis) rebuildEdgeBuffers(ctx)
+    applyWideLineWidth(ctx)
     applyHighlight(ctx)
     updateLabelVisibility(ctx)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -813,6 +867,27 @@ const Graph3D = forwardRef(function Graph3D(
   // 4. App側から呼べる命令的API
   // ======================================================================
   useImperativeHandle(ref, () => ({
+    /** 線ごとの種類・関連の強さ・自然長・今の長さ(デバッグ用。SPEC 6.9) */
+    getEdgeState() {
+      const ctx = ctxRef.current
+      if (!ctx) return []
+      return ctx.links.map((l) => {
+        const a = ctx.nodes.get(l.source)
+        const b = ctx.nodes.get(l.target)
+        return {
+          source: l.source,
+          target: l.target,
+          type: l.type,
+          relScore: l.relScore,
+          mutual: l.mutual,
+          sharedCount: l.sharedCount,
+          springLength: l.springLength,
+          wide: !!l.wide,
+          dist: Math.round(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) * 10) / 10,
+        }
+      })
+    },
+
     /**
      * 全ノードの現在座標を返す(デバッグ用)。
      * 「同じ URL を2回開いて同じ配置になるか」を機械的に照合するために使う
@@ -1140,8 +1215,17 @@ function syncGraph(ctx, graphData, currentId) {
       primary: false,
       bright: 0,
       brightTarget: 0,
+      // 線の種類と関連の強さ(SPEC 6.9)。buildGraph が付ける
+      type: l.type,
+      relScore: l.relScore || 0,
+      mutual: l.mutual ? 1 : 0,
+      sharedCount: l.sharedCount || 0,
+      springLength: 0,
     }))
     .filter((l) => ctx.nodes.has(l.source) && ctx.nodes.has(l.target))
+  // 線ごとのバネの自然長。毎ステップ計算せず、ここと力学の設定の変更時にだけ決める
+  // (stepSimulation の内側のループを重くしないため)
+  for (const link of ctx.links) link.springLength = computeEdgeSpringLength(link, ctx.layout)
   if (ctx.links.length !== prevLinkCount) structureChanged = true
 
   // --- 隣接表を作る(ハイライトのたびにリンク配列を走査しないため) ---
@@ -1197,22 +1281,7 @@ function syncGraph(ctx, graphData, currentId) {
     ctx.linkByKey.set(`${link.target}->${link.source}`, link)
   }
 
-  // --- 線分用のバッファを張り直す(実線・破線それぞれ) ---
-  const rebuildEdgeGeometry = (mesh, count) => {
-    mesh.geometry.dispose()
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute(
-      'position',
-      new THREE.BufferAttribute(new Float32Array(count * 6), 3)
-    )
-    geometry.setAttribute(
-      'color',
-      new THREE.BufferAttribute(new Float32Array(count * 6), 3)
-    )
-    mesh.geometry = geometry
-  }
-  rebuildEdgeGeometry(ctx.edgeSolid, ctx.links.filter((l) => l.primary).length)
-  rebuildEdgeGeometry(ctx.edgeDashed, ctx.links.filter((l) => !l.primary).length)
+  rebuildEdgeBuffers(ctx)
 
   // 出現位置の指定は今回の同期で使い切る(残すと後の再表示まで現在地から生えてしまう)
   ctx.pendingSpawn.clear()
@@ -1231,6 +1300,78 @@ function syncGraph(ctx, graphData, currentId) {
       ctx.links.length
     )
   }
+}
+
+// ==========================================================================
+// 線分用のバッファを張り直す
+//
+// 線は 実線/破線 × 通常/太線 の4つのメッシュに振り分ける。
+// 太線は相互リンクの強調(mutualEmphasis。SPEC 6.9)が on のときの相互リンクだけ。
+// off のときは太線を使わず、従来とまったく同じ描き方になる(current・rev2 の見た目を保つ)
+// ==========================================================================
+function rebuildEdgeBuffers(ctx) {
+  const emphasis = ctx.visual.mutualEmphasis
+  let solid = 0
+  let dashed = 0
+  let wideSolid = 0
+  let wideDashed = 0
+  for (const link of ctx.links) {
+    link.wide = !!(emphasis && link.mutual)
+    if (link.wide && link.primary) wideSolid++
+    else if (link.wide) wideDashed++
+    else if (link.primary) solid++
+    else dashed++
+  }
+
+  const rebuildBasic = (mesh, count) => {
+    mesh.geometry.dispose()
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(count * 6), 3)
+    )
+    geometry.setAttribute(
+      'color',
+      new THREE.BufferAttribute(new Float32Array(count * 6), 3)
+    )
+    mesh.geometry = geometry
+  }
+  rebuildBasic(ctx.edgeSolid, solid)
+  rebuildBasic(ctx.edgeDashed, dashed)
+
+  // 太線は配列を1回だけ確保し、毎フレームはその中身を書き換える
+  // (setPositions は呼ぶたびにバッファを作り直すので、毎フレームは呼ばない)
+  const rebuildWide = (mesh, count, withDistances) => {
+    mesh.geometry.dispose()
+    const geometry = new LineSegmentsGeometry()
+    mesh.visible = count > 0
+    if (count > 0) {
+      geometry.setPositions(new Float32Array(count * 6))
+      geometry.setColors(new Float32Array(count * 6))
+      if (withDistances) {
+        // 破線の模様の起点。通常の破線(LineSegments)と同じく、線ごとに 0 から数える
+        const buffer = new THREE.InstancedInterleavedBuffer(new Float32Array(count * 2), 2, 1)
+        geometry.setAttribute(
+          'instanceDistanceStart',
+          new THREE.InterleavedBufferAttribute(buffer, 1, 0)
+        )
+        geometry.setAttribute(
+          'instanceDistanceEnd',
+          new THREE.InterleavedBufferAttribute(buffer, 1, 1)
+        )
+      }
+    }
+    mesh.geometry = geometry
+  }
+  rebuildWide(ctx.wideSolid, wideSolid, false)
+  rebuildWide(ctx.wideDashed, wideDashed, true)
+  applyWideLineWidth(ctx)
+}
+
+/** 太線の太さ。linewidth は通常の線(1 デバイスピクセル)に対する倍率(resize の resolution を参照) */
+function applyWideLineWidth(ctx) {
+  ctx.wideSolidMaterial.linewidth = ctx.visual.mutualWidthMultiplier
+  ctx.wideDashedMaterial.linewidth = ctx.visual.mutualWidthMultiplier
 }
 
 // ==========================================================================
@@ -1395,6 +1536,13 @@ function updateVisuals(ctx, t, dt) {
   for (const link of ctx.links) {
     link.bright += (link.brightTarget - link.bright) * k
   }
+
+  // 相互リンクの脈動(SPEC 6.9)。ホバー・遷移の減光を補間した後の明るさに、
+  // 描くときに最後に掛ける(暗くしてある線が脈動で急に目立たないように)
+  const { mutualEmphasis, mutualPulseAmplitude, mutualPulseSpeed } = ctx.visual
+  ctx.mutualPulse = mutualEmphasis
+    ? mutualPulseFactor(t, mutualPulseAmplitude, mutualPulseSpeed)
+    : 1
 }
 
 // ==========================================================================
@@ -1470,21 +1618,40 @@ function updatePositions(ctx) {
   const current = ctx.currentId ? ctx.nodes.get(ctx.currentId) : null
   if (current) ctx.ring.position.copy(displayPosition(ctx, current, _v1))
 
-  // 線分の座標と明るさ(実線・破線それぞれのバッファに詰める)
+  // 線分の座標と明るさ(実線・破線 × 通常・太線 それぞれのバッファに詰める)
   const solidPos = ctx.edgeSolid.geometry.getAttribute('position')
   const solidCol = ctx.edgeSolid.geometry.getAttribute('color')
   const dashPos = ctx.edgeDashed.geometry.getAttribute('position')
   const dashCol = ctx.edgeDashed.geometry.getAttribute('color')
   if (!solidPos || !dashPos) return
+  // 太線(相互リンクの強調)。無いときは attribute も無い
+  const wideSolidGeo = ctx.wideSolid.geometry
+  const wideDashGeo = ctx.wideDashed.geometry
+  const wsPos = wideSolidGeo.attributes.instanceStart?.data
+  const wsCol = wideSolidGeo.attributes.instanceColorStart?.data
+  const wdPos = wideDashGeo.attributes.instanceStart?.data
+  const wdCol = wideDashGeo.attributes.instanceColorStart?.data
+  const wdDist = wideDashGeo.attributes.instanceDistanceStart?.data
   let si = 0
   let di = 0
+  let wsi = 0
+  let wdi = 0
   for (const link of ctx.links) {
     const a = ctx.nodes.get(link.source)
     const b = ctx.nodes.get(link.target)
     if (!a || !b) continue
-    const pos = link.primary ? solidPos.array : dashPos.array
-    const col = link.primary ? solidCol.array : dashCol.array
-    let i = link.primary ? si : di
+    let pos
+    let col
+    let i
+    if (link.wide) {
+      pos = link.primary ? wsPos.array : wdPos.array
+      col = link.primary ? wsCol.array : wdCol.array
+      i = link.primary ? wsi : wdi
+    } else {
+      pos = link.primary ? solidPos.array : dashPos.array
+      col = link.primary ? solidCol.array : dashCol.array
+      i = link.primary ? si : di
+    }
     displayPosition(ctx, a, _v1)
     displayPosition(ctx, b, _v2)
     pos[i] = _v1.x
@@ -1493,14 +1660,34 @@ function updatePositions(ctx) {
     pos[i + 3] = _v2.x
     pos[i + 4] = _v2.y
     pos[i + 5] = _v2.z
-    for (let j = 0; j < 6; j++) col[i + j] = link.bright
-    if (link.primary) si += 6
+    // 脈動は太線(=強調中の相互リンク)にだけ掛ける
+    const bright = link.wide ? link.bright * ctx.mutualPulse : link.bright
+    for (let j = 0; j < 6; j++) col[i + j] = bright
+    if (link.wide && !link.primary) {
+      // 破線の模様は線ごとに 0 から数える
+      const d = (wdi / 6) * 2
+      wdDist.array[d] = 0
+      wdDist.array[d + 1] = _v1.distanceTo(_v2)
+    }
+    if (link.wide) {
+      if (link.primary) wsi += 6
+      else wdi += 6
+    } else if (link.primary) si += 6
     else di += 6
   }
   solidPos.needsUpdate = true
   solidCol.needsUpdate = true
   dashPos.needsUpdate = true
   dashCol.needsUpdate = true
+  if (wsPos) {
+    wsPos.needsUpdate = true
+    wsCol.needsUpdate = true
+  }
+  if (wdPos) {
+    wdPos.needsUpdate = true
+    wdCol.needsUpdate = true
+    wdDist.needsUpdate = true
+  }
   // 破線は頂点ごとの累積距離が必要。座標が毎フレーム動くので毎回計算し直す
   if (dashPos.count > 0) ctx.edgeDashed.computeLineDistances()
 }
@@ -1529,38 +1716,55 @@ function updateGrid(ctx, t) {
 }
 
 // ==========================================================================
-// データパケット: 起点→一次エッジ上を流れる点
+// データパケット (SPEC 6.7): 経路(記事名の列)に沿って流れる点
+//   通常        … [現在地, 子]           1区間
+//   共通ワード  … [1つ前の中心, 共通ワード, 現在地]  2区間(sharedPackets。SPEC 6.9)
+// どの区間も同じ速さで進む(1周の時間 = PACKET_PERIOD_S × 区間数)。継ぎ目で止めない
 // ==========================================================================
 function updatePackets(ctx, t) {
-  const current = ctx.currentId ? ctx.nodes.get(ctx.currentId) : null
   const ratio = ctx.discTexture.userData.circleRatio || 1
   const s = spriteScaleFromPx(ctx, (PACKET_PX * 2) / ratio)
 
   for (let i = 0; i < ctx.packets.length; i++) {
     const sprite = ctx.packets[i]
-    const targetId = ctx.packetIds[i]
-    const target = current && targetId ? ctx.nodes.get(targetId) : null
-    const link = target ? ctx.linkByKey.get(`${current.id}->${target.id}`) : null
-    if (!target || !link) {
+    const route = ctx.currentId ? ctx.packetRoutes[i] : null
+    const segments = route ? route.length - 1 : 0
+    // 経路上のノードと線がすべて画面にあるときだけ流す
+    let ok = segments >= 1
+    for (let k = 0; ok && k < segments; k++) {
+      ok =
+        ctx.nodes.has(route[k]) &&
+        ctx.nodes.has(route[k + 1]) &&
+        ctx.linkByKey.has(`${route[k]}->${route[k + 1]}`)
+    }
+    if (!ok) {
       sprite.visible = false
       continue
     }
     // 開始タイミングを PACKET_STAGGER_S ずつずらす
+    const period = PACKET_PERIOD_S * segments
     const local = t - i * PACKET_STAGGER_S
-    const phase = ((local % PACKET_PERIOD_S) + PACKET_PERIOD_S) % PACKET_PERIOD_S / PACKET_PERIOD_S
+    const phase = ((local % period) + period) % period / period
+    const seg = Math.min(Math.floor(phase * segments), segments - 1)
+    const from = ctx.nodes.get(route[seg])
+    const to = ctx.nodes.get(route[seg + 1])
+    const link = ctx.linkByKey.get(`${from.id}->${to.id}`)
 
-    displayPosition(ctx, current, _v1)
-    displayPosition(ctx, target, _v2)
-    sprite.position.lerpVectors(_v1, _v2, phase)
+    displayPosition(ctx, from, _v1)
+    displayPosition(ctx, to, _v2)
+    sprite.position.lerpVectors(_v1, _v2, phase * segments - seg)
     sprite.scale.set(s, s, 1)
 
-    // 不透明度 0→1→1→0(端で唐突に消えないように)
+    // 不透明度 0→1→1→0(端で唐突に消えないように)。経路全体に対して掛ける
     let opacity
     if (phase < 1 / 3) opacity = phase * 3
     else if (phase < 2 / 3) opacity = 1
     else opacity = (1 - phase) * 3
-    // ホバー/遷移で線が減光しているときはパケットも一緒に落とす
-    const linkFactor = Math.min(link.bright / (ctx.visual.edgePrimaryOpacity || 1), 1)
+    // ホバー/遷移で線が減光しているときはパケットも一緒に落とす。
+    // 基準はその線の普段の明るさ(共通ワードの経路は破線=薄い線も通るので、
+    // 実線の明るさを基準にすると、破線の区間だけパケットが暗くなってしまう)
+    const base = link.primary ? ctx.visual.edgePrimaryOpacity : ctx.visual.edgeWeakOpacity
+    const linkFactor = Math.min(link.bright / (base || 1), 1)
     sprite.material.opacity = opacity * linkFactor
     sprite.visible = true
   }
@@ -1742,7 +1946,6 @@ function stepSimulation(ctx) {
     repulsion,
     repulsionRange,
     springK,
-    springLength,
     centerK,
     damping,
     alphaDecay,
@@ -1792,7 +1995,9 @@ function stepSimulation(ctx) {
     const dy = b.y - a.y
     const dz = b.z - a.z
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001
-    const force = (dist - springLength) * springK
+    // 自然長は線ごと(関連スコア・中心同士の関係で変わる。SPEC 6.9)。
+    // distanceByScore が off なら、どの線も config.springLength が入っている
+    const force = (dist - link.springLength) * springK
     const fx = (dx / dist) * force
     const fy = (dy / dist) * force
     const fz = (dz / dist) * force

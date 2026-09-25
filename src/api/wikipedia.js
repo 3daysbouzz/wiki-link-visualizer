@@ -46,6 +46,7 @@ import {
   W_LEAD,
   SCORE_DEBUG_ROWS,
 } from '../constants.js'
+import { normalizeScore } from '../utils/relation.js'
 
 const API_ENDPOINT = 'https://ja.wikipedia.org/w/api.php'
 const PAGEVIEWS_ENDPOINT =
@@ -664,6 +665,17 @@ function logScoreTable(title, pool) {
   )
 }
 
+/**
+ * プールの候補を、expansions に記憶する形に削る。
+ * 配置と線の強調(SPEC 6.9)に使う mutual と relScore(0〜1 にならしたスコア)を残す。
+ * relScore はここで(=展開したときの重みで)計算しておく。
+ * あとから今の重みで割り直すと、重みを動かした瞬間に記憶済みの配置がずれるため
+ */
+function toExpansionLink(c, weights) {
+  const w = { ...DEFAULT_WEIGHTS, ...weights }
+  return { title: c.title, mutual: c.mutual, relScore: normalizeScore(c.score, w) }
+}
+
 /** 確定枠(上位 GUARANTEED_TOP)のうち morelike 圏外の件数。加点がどれだけ効いたかの目安 */
 function countOutsideMorelike(pool) {
   return pool.slice(0, GUARANTEED_TOP).filter((c) => c.m === 0).length
@@ -700,7 +712,7 @@ function optional(promise, label, empty) {
  * @param {{wMorelike:number, wMutual:number, wLead:number}} [options.weights]
  *   関連スコアの重み(SPEC 3.3)。省略時は加点なし(current と同じ)
  * @param {boolean} [options.debug] true ならスコアの内訳を console.table に出す
- * @returns {Promise<{ title:string, links:{title:string}[] }>}
+ * @returns {Promise<{ title:string, links:{title:string, mutual:0|1, relScore:number}[] }>}
  */
 export async function fetchLinkedArticles(title, options = {}) {
   const {
@@ -726,7 +738,7 @@ export async function fetchLinkedArticles(title, options = {}) {
     if (debug) logScoreTable(cached.title, pool)
     return {
       title: cached.title,
-      links: pickLinks(pool, limit, randomFor(cached.title)).map((c) => ({ title: c.title })),
+      links: pickLinks(pool, limit, randomFor(cached.title)).map((c) => toExpansionLink(c, weights)),
     }
   }
 
@@ -869,7 +881,7 @@ export async function fetchLinkedArticles(title, options = {}) {
     )
   }
 
-  return { title: center.title, links: picked.map((c) => ({ title: c.title })) }
+  return { title: center.title, links: picked.map((c) => toExpansionLink(c, weights)) }
 }
 
 // ---------------------------------------------------------------------------
@@ -900,13 +912,13 @@ function unshownPool(title, shownTitles, weights) {
  * @param {{wMorelike:number, wMutual:number, wLead:number}} [weights]
  *   その記事を展開したときの重み。今の重みではなく展開時の重みを使うのは、
  *   「重みの変更は次に展開する記事から効く」(SPEC 3.3)と揃えるため
- * @returns {{title:string}[]}
+ * @returns {{title:string, mutual:0|1, relScore:number}[]}
  */
 export function getMoreLinks(title, shownTitles, count, weights = DEFAULT_WEIGHTS) {
   if (!(count > 0)) return []
   return unshownPool(title, shownTitles, weights)
     .slice(0, count)
-    .map((c) => ({ title: c.title }))
+    .map((c) => toExpansionLink(c, weights))
 }
 
 /** まだ表示していない候補の件数(上限 moreMax は考慮しない) */

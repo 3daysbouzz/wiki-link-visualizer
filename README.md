@@ -58,6 +58,17 @@ npm run dev
 関係の強い記事が漏れてしまうため、後の2つを足しています。
 スコア上位10件は必ず出し、残りは上位ほど出やすい抽選で選びます。
 
+### 関連の強さを配置と動きで見せる(試験中: `?preset=rev3`)
+
+`?preset=rev3` を付けると、関連の強さが並び順だけでなく配置と動きにも出ます
+(調整中のため、指定なしの表示では off です)。
+
+- **関連の強い記事ほど中心の近く**に置かれる
+- **相互リンクの線は少し太く、ゆっくり明滅(脈動)する**。色は変わりません
+- 2つ目の記事へ進むと、**ひとつ前の記事と今の記事の両方につながる関連ワードを通って、点が流れる**
+  (前の記事 → 共通の関連ワード → 今の記事)。共通の関連ワードが無いときは従来どおり
+- 訪れた記事同士の距離は、相互リンクがあるほど・共通の関連ワードが多いほど近くなる
+
 関連記事は抽選で選んでいますが、乱数は種付き(`seed`)なので、同じ記事・同じ `seed` なら
 いつ開いても同じ顔ぶれになります。違う顔ぶれが見たいときは URL の `seed=` を変えてください。
 
@@ -82,11 +93,12 @@ http://localhost:5173/?preset=mesh&nodeLimit=64&start=初音ミク&path=MEIKO,KA
 
 | クエリ | 意味 |
 |---|---|
-| `preset=rev2` / `current` / `mesh` | 表示プリセット(`src/config/presets.ts`)。指定なしは `rev2`。`current` は加点なしの従来の順位 |
+| `preset=rev2` / `current` / `mesh` / `rev3` | 表示プリセット(`src/config/presets.ts`)。指定なしは `rev2`。`current` は加点なしの従来の順位。`rev3` は rev2 + 関連の強さを配置と動きで見せる(試験中) |
 | `nodeLimit=` `neighborLimit=` `edgeMode=` `colorMode=` `trailEnabled=` `seed=` | プリセットの値を個別に上書き |
 | `wMorelike=` `wMutual=` `wLead=` | 関連スコアの重み(内容の近さ・相互リンク・冒頭リンク)を上書き。次に展開する記事から効く |
 | `moreBatch=` `moreMax=` | 関連記事の追加1回の件数と、1記事あたりの上限 |
 | `labelDepthFade=` `fadeStart=` `fadeEnd=` | 奥のラベルを薄くするか(1/0)と、薄くし始める・消える深さ |
+| `distanceByScore=` `mutualEmphasis=` `sharedPackets=` | 関連の強さで距離を変える・相互リンクを脈動させる・共通の関連ワードに点を流す(1/0)。数値の項目は SPEC 12.2 |
 | `start=記事名&path=記事,記事` | 開始記事と辿った経路。歩くと自動で URL に書かれる |
 | `debug=1` | 右上にデバッグパネル(設定をその場で変更)を出す。Console にスコアの内訳の表も出る |
 
@@ -168,7 +180,8 @@ npm run preview
 そのため依存そのものを撤廃し、`src/components/Graph3D.jsx` に以下を自前実装しています。
 
 - 力学レイアウト(ノード間の反発 / リンクのバネ / 中心への引力)
-- ノード描画(`THREE.Sprite`、画面上のピクセルで大きさ固定)、リンク描画(`THREE.LineSegments`、実線と破線)
+- ノード描画(`THREE.Sprite`、画面上のピクセルで大きさ固定)、リンク描画(`THREE.LineSegments`、実線と破線。
+  相互リンクの強調だけ three 同梱の `LineSegments2` で太く描く)
 - 記事名ラベル(`THREE.Sprite` + `CanvasTexture`、JetBrains Mono)
 - 背景グリッド・データパケット・パララックスドリフト・クリック遷移のアニメーション
 - カメラ操作(`OrbitControls`)、クリック判定(画面に投影した距離で判定)

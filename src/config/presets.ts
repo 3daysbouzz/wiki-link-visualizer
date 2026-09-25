@@ -30,6 +30,18 @@ import {
   LABEL_DEPTH_FADE,
   LABEL_FADE_START,
   LABEL_FADE_END,
+  DISTANCE_BY_SCORE,
+  CHILD_SPRING_MIN,
+  CHILD_SPRING_MAX,
+  TRAIL_SPRING_BASE,
+  TRAIL_MUTUAL_BONUS,
+  TRAIL_SHARED_BONUS,
+  TRAIL_SHARED_CAP,
+  MUTUAL_EMPHASIS,
+  MUTUAL_WIDTH_MULTIPLIER,
+  MUTUAL_PULSE_AMPLITUDE,
+  MUTUAL_PULSE_SPEED,
+  SHARED_PACKETS,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -95,6 +107,34 @@ export interface VizConfig {
   moreBatch: number
   /** 1記事あたりの追加の上限 */
   moreMax: number
+
+  // --- 関連の強さ(relation)。SPEC 6.9 ------------------------------------
+  // 距離の項目(distanceByScore〜trailSharedCap)は layout と同じく、変更すると力学を再開する。
+  // 強調・パケットの項目は visual と同じく、描画だけが変わる
+  /** 関連スコアが高い記事ほど中心の近くに置く。off なら全部の線が springLength */
+  distanceByScore: boolean
+  /** 子への線の自然長の下限(relScore=1 のとき) */
+  childSpringMin: number
+  /** 子への線の自然長の上限(relScore=0 のとき) */
+  childSpringMax: number
+  /** 中心同士の線の自然長の基準(手がかりが何も無いとき) */
+  trailSpringBase: number
+  /** 中心同士が相互リンクしているときに縮める量 */
+  trailMutualBonus: number
+  /** 共通ワード1件あたりに縮める量 */
+  trailSharedBonus: number
+  /** 共通ワードを数える上限 */
+  trailSharedCap: number
+  /** 相互リンクの線を太さと脈動で強調する */
+  mutualEmphasis: boolean
+  /** 相互リンクの線の太さ(通常の線に対する倍率) */
+  mutualWidthMultiplier: number
+  /** 脈動の振幅(明るさが 1 と 1-振幅 の間を往復する) */
+  mutualPulseAmplitude: number
+  /** 脈動の速さ(ラジアン/秒) */
+  mutualPulseSpeed: number
+  /** 前後の中心に共通する関連ワードを通る経路にパケットを流す(SPEC 6.7) */
+  sharedPackets: boolean
 }
 
 /**
@@ -109,6 +149,29 @@ export interface VizConfig {
  * 0.6 で4件が入った。詳細は docs/tasks/01-report-relevance-score.md
  */
 const REV2_RANKING = { wMorelike: 1.0, wMutual: 0.8, wLead: 0.6 }
+
+/**
+ * 関連の強さ(SPEC 6.9)の数値。current・rev2・mesh・rev3 で共通にし、on/off だけを変える
+ * (on/off を切り替えたときの違いだけを比べられるように)。値の理由は constants.js のコメント
+ */
+const RELATION_VALUES = {
+  childSpringMin: CHILD_SPRING_MIN,
+  childSpringMax: CHILD_SPRING_MAX,
+  trailSpringBase: TRAIL_SPRING_BASE,
+  trailMutualBonus: TRAIL_MUTUAL_BONUS,
+  trailSharedBonus: TRAIL_SHARED_BONUS,
+  trailSharedCap: TRAIL_SHARED_CAP,
+  mutualWidthMultiplier: MUTUAL_WIDTH_MULTIPLIER,
+  mutualPulseAmplitude: MUTUAL_PULSE_AMPLITUDE,
+  mutualPulseSpeed: MUTUAL_PULSE_SPEED,
+}
+
+/** 関連の強さの on/off。current・rev2・mesh はすべて off(従来の配置・見た目を保つ) */
+const RELATION_OFF = {
+  distanceByScore: DISTANCE_BY_SCORE,
+  mutualEmphasis: MUTUAL_EMPHASIS,
+  sharedPackets: SHARED_PACKETS,
+}
 
 /** rev2 のラベルの深さフェード。current はオフ(従来の見た目を保つ) */
 const REV2_LABELS = {
@@ -146,6 +209,8 @@ export const PRESETS: Record<string, VizConfig> = {
     wLead: W_LEAD,
     moreBatch: MORE_BATCH,
     moreMax: MORE_MAX,
+    ...RELATION_VALUES,
+    ...RELATION_OFF,
   },
   // rev2 の既定。current に関連スコアの加点(相互リンク・冒頭リンク)を足したもの。
   // 力学・見た目の値は current と同じ(順位付けの違いだけを比べられるように)
@@ -171,6 +236,8 @@ export const PRESETS: Record<string, VizConfig> = {
     ...REV2_RANKING,
     moreBatch: MORE_BATCH,
     moreMax: MORE_MAX,
+    ...RELATION_VALUES,
+    ...RELATION_OFF,
   },
   // ネットワークに見せるための設定(Phase 1 以降で本領を発揮する)
   mesh: {
@@ -195,7 +262,21 @@ export const PRESETS: Record<string, VizConfig> = {
     ...REV2_RANKING,
     moreBatch: MORE_BATCH,
     moreMax: MORE_MAX,
+    ...RELATION_VALUES,
+    ...RELATION_OFF,
   },
+}
+
+/**
+ * rev3 = rev2 + 関連の強さ(SPEC 6.9)をすべて on。
+ * まだ調整段階なので既定(DEFAULT_PRESET)にはせず、?preset=rev3 で確かめる
+ * (2026-09-25 利用者と合意。調整が済めば current も含めて on にする可能性がある)
+ */
+PRESETS.rev3 = {
+  ...PRESETS.rev2,
+  distanceByScore: true,
+  mutualEmphasis: true,
+  sharedPackets: true,
 }
 
 // 何も指定しないときのプリセット。rev2 の改善を既定にし、
@@ -227,6 +308,13 @@ export const DEFAULT_PRESET = 'rev2'
  *                  それ以上は1つの要素だけで順位が決まり、比べる意味がなくなる
  *   moreBatch      0 だと追加できない。上限は POOL_SIZE の範囲で一度に出して意味のある量
  *   moreMax        0 で追加なし。上限は候補プール(POOL_SIZE=150)を超えない
+ *   childSpring*   springLength と同じ範囲。Min > Max にしても壊れない(関連の強い方が遠くなるだけ)
+ *   trailSpringBase 子より外側に置く基準なので、springLength より上限を広く取る
+ *   trail*Bonus    縮めすぎても childSpringMin で止まるので、大きめまで許す
+ *   trailSharedCap 共通ワードは多くても表示中の件数(neighborLimit + moreMax)まで
+ *   mutualWidthMultiplier 1 で通常の線と同じ太さ。4 を超えると線が帯に見える
+ *   mutualPulseAmplitude  0 で脈動なし、1 で谷で消える
+ *   mutualPulseSpeed      0 で止まる。20(約0.3秒周期)を超えると点滅に見える
  */
 export const RANGES: Record<string, { min: number; max: number; step?: number }> = {
   nodeLimit: { min: 8, max: 1000 },
@@ -250,6 +338,15 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   wLead: { min: 0, max: 2, step: 0.05 },
   moreBatch: { min: 1, max: 40 },
   moreMax: { min: 0, max: 150 },
+  childSpringMin: { min: 1, max: 400, step: 1 },
+  childSpringMax: { min: 1, max: 400, step: 1 },
+  trailSpringBase: { min: 1, max: 600, step: 1 },
+  trailMutualBonus: { min: 0, max: 300, step: 1 },
+  trailSharedBonus: { min: 0, max: 50, step: 0.5 },
+  trailSharedCap: { min: 0, max: 150 },
+  mutualWidthMultiplier: { min: 1, max: 4, step: 0.05 },
+  mutualPulseAmplitude: { min: 0, max: 1, step: 0.05 },
+  mutualPulseSpeed: { min: 0, max: 20, step: 0.1 },
 }
 
 /** 力学に関わる項目。変えたらシミュレーションを再開する(配置は作り直さない) */
@@ -261,6 +358,14 @@ export const LAYOUT_KEYS = [
   'centerK',
   'damping',
   'alphaDecay',
+  // 関連の強さのうち距離に効くもの(SPEC 6.9)
+  'distanceByScore',
+  'childSpringMin',
+  'childSpringMax',
+  'trailSpringBase',
+  'trailMutualBonus',
+  'trailSharedBonus',
+  'trailSharedCap',
 ] as const
 
 /**
@@ -278,6 +383,28 @@ export const VISUAL_KEYS = [
   'labelDepthFade',
   'fadeStart',
   'fadeEnd',
+  // 関連の強さのうち見た目だけに効くもの(SPEC 6.9)
+  'mutualEmphasis',
+  'mutualWidthMultiplier',
+  'mutualPulseAmplitude',
+  'mutualPulseSpeed',
+  'sharedPackets',
+] as const
+
+/** デバッグパネルの relation フォルダに並べる項目(上の LAYOUT_KEYS・VISUAL_KEYS の一部) */
+export const RELATION_KEYS = [
+  'distanceByScore',
+  'childSpringMin',
+  'childSpringMax',
+  'trailSpringBase',
+  'trailMutualBonus',
+  'trailSharedBonus',
+  'trailSharedCap',
+  'mutualEmphasis',
+  'mutualWidthMultiplier',
+  'mutualPulseAmplitude',
+  'mutualPulseSpeed',
+  'sharedPackets',
 ] as const
 
 /** URL や leva から来た値を VizConfig の型に揃える。不正な値は base の値を使う */
@@ -372,5 +499,63 @@ export function coerceConfig(
     wLead: float(raw.wLead, base.wLead, r.wLead.min, r.wLead.max),
     moreBatch: int(raw.moreBatch, base.moreBatch, r.moreBatch.min, r.moreBatch.max),
     moreMax: int(raw.moreMax, base.moreMax, r.moreMax.min, r.moreMax.max),
+
+    distanceByScore: bool(raw.distanceByScore, base.distanceByScore),
+    childSpringMin: float(
+      raw.childSpringMin,
+      base.childSpringMin,
+      r.childSpringMin.min,
+      r.childSpringMin.max
+    ),
+    childSpringMax: float(
+      raw.childSpringMax,
+      base.childSpringMax,
+      r.childSpringMax.min,
+      r.childSpringMax.max
+    ),
+    trailSpringBase: float(
+      raw.trailSpringBase,
+      base.trailSpringBase,
+      r.trailSpringBase.min,
+      r.trailSpringBase.max
+    ),
+    trailMutualBonus: float(
+      raw.trailMutualBonus,
+      base.trailMutualBonus,
+      r.trailMutualBonus.min,
+      r.trailMutualBonus.max
+    ),
+    trailSharedBonus: float(
+      raw.trailSharedBonus,
+      base.trailSharedBonus,
+      r.trailSharedBonus.min,
+      r.trailSharedBonus.max
+    ),
+    trailSharedCap: int(
+      raw.trailSharedCap,
+      base.trailSharedCap,
+      r.trailSharedCap.min,
+      r.trailSharedCap.max
+    ),
+    mutualEmphasis: bool(raw.mutualEmphasis, base.mutualEmphasis),
+    mutualWidthMultiplier: float(
+      raw.mutualWidthMultiplier,
+      base.mutualWidthMultiplier,
+      r.mutualWidthMultiplier.min,
+      r.mutualWidthMultiplier.max
+    ),
+    mutualPulseAmplitude: float(
+      raw.mutualPulseAmplitude,
+      base.mutualPulseAmplitude,
+      r.mutualPulseAmplitude.min,
+      r.mutualPulseAmplitude.max
+    ),
+    mutualPulseSpeed: float(
+      raw.mutualPulseSpeed,
+      base.mutualPulseSpeed,
+      r.mutualPulseSpeed.min,
+      r.mutualPulseSpeed.max
+    ),
+    sharedPackets: bool(raw.sharedPackets, base.sharedPackets),
   }
 }

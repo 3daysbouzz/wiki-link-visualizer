@@ -10,9 +10,11 @@ import { PRESETS, RANGES } from '../config/presets.ts'
  * 「初期化でなく、人がパネルを触った」ときだけ上位へ通知する。
  * そうしないと読み込んだだけで URL が書き換わり、設定の反映が循環する。
  *
- * 項目は layout(力学)・visual(見た目)・ranking(関連リンクの順位付け)のフォルダに分けている。
+ * 項目は layout(力学)・visual(見た目)・ranking(関連リンクの順位付け)・
+ * relation(関連の強さを配置と動きで見せる。SPEC 6.9)のフォルダに分けている。
  * layout を動かすと配置の計算が再開し、visual は描画だけが変わる(SPEC 12.2)。
  * ranking の重みは次に展開する記事から、moreBatch / moreMax は次に追加するときから効く。
+ * relation の距離の項目は layout と同じく計算を再開し、強調・パケットは描画だけが変わる。
  * スライダーの端は presets.ts の RANGES と同じものを使う
  * (パネルと URL で通る値の範囲がずれないようにするため)。
  */
@@ -29,6 +31,14 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
     step: RANGES[key].step ?? 1,
     label: label || key,
     ...(hint ? { hint } : {}),
+    onChange: fromPanelOnly((v) => onChange({ [key]: v })),
+  })
+
+  /** on/off の項目 */
+  const toggle = (key, hint) => ({
+    value: config[key],
+    label: key,
+    hint,
     onChange: fromPanelOnly((v) => onChange({ [key]: v })),
   })
 
@@ -117,6 +127,45 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
           wLead: slider('wLead', 'wLead', '冒頭リンクの加点。次の展開から効く'),
           moreBatch: slider('moreBatch', 'moreBatch', '追加1回で足す件数'),
           moreMax: slider('moreMax', 'moreMax', '1記事あたりの追加の上限'),
+        },
+        { collapsed: false }
+      ),
+
+      // 関連の強さ(SPEC 6.9)。rev3 ですべて on。
+      // 距離の項目を動かすと今の位置から計算が再開し、強調・パケットは描画だけが変わる
+      relation: folder(
+        {
+          distanceByScore: toggle('distanceByScore', '関連が強い記事ほど中心の近くに置く'),
+          childSpringMin: slider('childSpringMin', 'childSpringMin', '関連が最も強い子の距離'),
+          childSpringMax: slider('childSpringMax', 'childSpringMax', '関連が最も弱い子の距離'),
+          trailSpringBase: slider('trailSpringBase', 'trailSpringBase', '中心同士の距離の基準'),
+          trailMutualBonus: slider(
+            'trailMutualBonus',
+            'trailMutualBonus',
+            '中心同士が相互リンクなら縮める量'
+          ),
+          trailSharedBonus: slider(
+            'trailSharedBonus',
+            'trailSharedBonus',
+            '共通ワード1件あたりに縮める量'
+          ),
+          trailSharedCap: slider('trailSharedCap', 'trailSharedCap', '共通ワードを数える上限'),
+          mutualEmphasis: toggle('mutualEmphasis', '相互リンクの線を太さと脈動で強調する'),
+          mutualWidthMultiplier: slider(
+            'mutualWidthMultiplier',
+            'mutualWidthMultiplier',
+            '相互リンクの線の太さ(倍)'
+          ),
+          mutualPulseAmplitude: slider(
+            'mutualPulseAmplitude',
+            'mutualPulseAmplitude',
+            '脈動の振幅。主役なので目に見える大きさに'
+          ),
+          mutualPulseSpeed: slider('mutualPulseSpeed', 'mutualPulseSpeed', '脈動の速さ(rad/秒)'),
+          sharedPackets: toggle(
+            'sharedPackets',
+            '前の中心 → 共通ワード → 今の中心 にパケットを流す'
+          ),
         },
         { collapsed: false }
       ),
