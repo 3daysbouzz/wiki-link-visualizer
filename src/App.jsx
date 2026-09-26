@@ -24,7 +24,7 @@ import {
 import { seededRandom } from './utils/prng.js'
 import { useLayoutMode } from './utils/layoutMode.js'
 import { buildGraph } from './utils/buildGraph.js'
-import { packetRoutesFor } from './utils/relation.js'
+import { packetRoutesFor, arrivalHighlightSet, startsArrival } from './utils/relation.js'
 import {
   PREVIEW_DELAY_MS,
   MAX_NODES_WARN,
@@ -176,15 +176,26 @@ export default function App() {
     }
   }
 
-  // クリック遷移を始める: カメラを飛ばし、その間は次のクリックを受け付けない
-  const travelTo = (title) => {
+  // 到着時の共通ワード強調(SPEC 6.10)の対象。軌跡の末尾に新しい記事を足して進んだときだけ作る
+  // (戻る・検索・URL からの復元・追加表示では作らない)。共通ワードが無ければ null
+  const arrivalFor = (prevTrail, nextTrail) => {
+    const c = configRef.current
+    if (!c.arrivalShared || !startsArrival(prevTrail, nextTrail)) return null
+    const set = arrivalHighlightSet(nextTrail, expansions.current, c.arrivalSharedMax, c)
+    if (!set) return null
+    return { ...set, holdMs: c.arrivalSharedMs, fadeMs: c.arrivalSharedFadeMs }
+  }
+
+  // クリック遷移を始める: カメラを飛ばし、その間は次のクリックを受け付けない。
+  // arrival を渡すと、カメラが着いてから到着時の共通ワード強調を始める
+  const travelTo = (title, arrival = null) => {
     travelingRef.current = true
     if (travelTimer.current) clearTimeout(travelTimer.current)
     travelTimer.current = setTimeout(() => {
       travelingRef.current = false
     }, TRAVEL_MS)
     // グラフへの反映(useEffect)を待ってから飛ぶ
-    setTimeout(() => graphRef.current?.travelTo(title), 60)
+    setTimeout(() => graphRef.current?.travelTo(title, arrival), 60)
   }
 
   // 閲覧数が届くたびに組み直すと重いので、少しまとめてから1回だけ組み直す
@@ -371,9 +382,10 @@ export default function App() {
       // 取り直すと追加表示した分が消えてしまうため(進む/戻るで顔ぶれを変えない)
       const stored = expansions.current.get(node.id)
       if (stored) {
-        commitTrail([...trailNow, node.id])
+        const nextTrail = [...trailNow, node.id]
+        commitTrail(nextTrail)
         loadViewsThenPrefetch([node.id, ...stored.map((l) => l.title)], node.id)
-        travelTo(node.id)
+        travelTo(node.id, arrivalFor(trailNow, nextTrail))
         return
       }
 
@@ -392,14 +404,13 @@ export default function App() {
 
         // リダイレクトでタイトルが変わることがあるので、解決後の名前を使う。
         // 既に軌跡上にあるなら、そこを現在地として並べ直す
-        commitTrail([
-          ...trailRef.current.filter((id) => id !== result.title),
-          result.title,
-        ])
+        const prevTrail = trailRef.current
+        const nextTrail = [...prevTrail.filter((id) => id !== result.title), result.title]
+        commitTrail(nextTrail)
         loadViewsThenPrefetch([result.title, ...result.links.map((l) => l.title)], result.title)
 
         // 新しい現在地へカメラを飛ばす(到着後は追従に引き継がれる)
-        travelTo(result.title)
+        travelTo(result.title, arrivalFor(prevTrail, nextTrail))
       } catch (e) {
         setError(e.message)
       } finally {
@@ -482,6 +493,8 @@ export default function App() {
         // 関連の強さ(SPEC 6.9)が距離に効いているかを確かめるのに使う
         expansion: (id) => expansions.current.get(id) || null,
         edges: () => graphRef.current?.getEdgeState() || [],
+        // 到着時の共通ワード強調の状態(SPEC 6.10)。強調していなければ null
+        arrival: () => graphRef.current?.getArrivalState() || null,
         // 設定をその場で変える。leva を触らずに挙動を確かめたいときに使う
         // 例: window.__viz.set({ repulsion: 9000 })
         set: (patch) => {

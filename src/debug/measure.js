@@ -19,7 +19,7 @@ import * as THREE from 'three'
 import { expandRoute, fetchPageviews } from '../api/wikipedia.js'
 import { buildGraph } from '../utils/buildGraph.js'
 import { seededRandom } from '../utils/prng.js'
-import { computeEdgeSpringLength } from '../utils/relation.js'
+import { computeEdgeSpringLength, arrivalHighlightSet, trailTier } from '../utils/relation.js'
 import { initialPosition, stepForces, fitCamera } from '../utils/forceLayout.js'
 import {
   projectToScreen,
@@ -32,6 +32,7 @@ import {
 } from '../utils/screenProjection.js'
 import {
   selectLabels,
+  focusForArrival,
   labelDisplayText,
   labelTextureSize,
   labelHeightPx,
@@ -73,7 +74,8 @@ import {
   MEASURE_VIEWPORTS,
 } from '../constants.js'
 
-const DEFAULT_PRESETS = ['rev2', 'rev3']
+// rev2・rev3・rev4 は順位付けの重みが同じなので、同じ展開結果のまま比べられる
+const DEFAULT_PRESETS = ['rev2', 'rev3', 'rev4']
 const DEFAULT_VIEWPORTS = ['pc', 'phone']
 // 上位・下位として比べる件数(M1・M3)
 const TOP_N = 10
@@ -95,11 +97,14 @@ const WORST_OF = {
   m6CenterPairs: 'max',
   m6TouchPairs: 'max',
   m6TouchCenterPairs: 'max',
+  m9Readable: 'min',
 }
 
 /**
  * 測る。options はすべて省略可(省略時は全部を測る)。
- * @param {{routes?:string[], presets?:string[], viewports?:string[]}} [options]
+ * overrides はプリセットごとの値の上書き(値の調整を試すとき用。例: { rev4: { trailLenFew: 150 } })。
+ * 上書きした値も結果の条件(conditions.config)に残る
+ * @param {{routes?:string[], presets?:string[], viewports?:string[], overrides?:Record<string, object>}} [options]
  * @param {{onProgress?:(text:string|null)=>void}} [hooks] 進み具合(ステータス行に出す文言)
  */
 export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
@@ -137,7 +142,10 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
     const route = routes[ri]
     const head = `MEASURE ${ri + 1}/${routes.length} ${route.key}`
     // 種は経路のもの。プリセットの seed が違っても同じ展開結果・同じ初期配置で比べる
-    const named = presetNames.map((name) => ({ name, config: { ...PRESETS[name], seed: route.seed } }))
+    const named = presetNames.map((name) => ({
+      name,
+      config: { ...PRESETS[name], ...(options.overrides?.[name] || {}), seed: route.seed },
+    }))
     assertSameRanking(named)
     const base = named[0].config
 
@@ -188,6 +196,8 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
       const graph = buildGraph(trail, expansions, views, config)
       const layout = settleLayout(graph, config)
       const scene = describeScene(graph, layout, trail, expansions, labelAspect)
+      // 到着時の共通ワード強調の対象(M9)。強調が off のプリセットでも、同じ件数の枠で数える
+      scene.arrival = arrivalHighlightSet(trail, expansions, config.arrivalSharedMax, config)
 
       for (let vi = 0; vi < viewportKeys.length; vi++) {
         const vpKey = viewportKeys[vi]
@@ -204,7 +214,7 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
   runs.sort((a, b) => a.order[0] - b.order[0] || a.order[1] - b.order[1] || a.order[2] - b.order[2])
   return {
     date: new Date().toISOString(),
-    options: { routes: routeKeys, presets: presetNames, viewports: viewportKeys },
+    options: { routes: routeKeys, presets: presetNames, viewports: viewportKeys, overrides: options.overrides || null },
     rules: {
       views: MEASURE_VIEWS,
       maxSteps: MEASURE_MAX_STEPS,
@@ -332,6 +342,7 @@ function measureViewport({ route, trail, views, missing, name, config, layout, s
   const camera = makeViewCamera(vp.width, vp.height, at(initialDir), target)
   const initial = evaluateView(camera, vp, vpKey, config, layout, scene)
 
+  const initialCenters = centerPairs(camera, vp, layout, scene)
   const perView = orbitDirections(MEASURE_VIEWS).map((dir) => {
     aimCamera(camera, at(dir), target, cameraUpFor(dir))
     return evaluateView(camera, vp, vpKey, config, layout, scene)
@@ -361,6 +372,8 @@ function measureViewport({ route, trail, views, missing, name, config, layout, s
       pageviewsMissing: missing,
     },
     M7: { steps: layout.steps, capped: layout.capped },
+    // 中心同士の組ごとの共通ワードの件数・段階・狙いの長さ・実際の距離(3D と、初期視点の画面 px)
+    centers: roundAll(initialCenters),
     initial: initial.detail,
     orbit: {
       perView: perView.map((v) => v.detail),
@@ -371,8 +384,11 @@ function measureViewport({ route, trail, views, missing, name, config, layout, s
   }
 }
 
-/** 投影とラベルの選び直しを、今のカメラで1回行う(まっさらな状態・優遇なし) */
-function viewState(camera, vp, config, layout, scene, previous = null, keepBias = 1) {
+/**
+ * 投影とラベルの選び直しを、今のカメラで1回行う(まっさらな状態・優遇なし)。
+ * focus を渡すと注目状態(到着時の共通ワード強調など)で選ぶ。対象は深さフェードを受けない
+ */
+function viewState(camera, vp, config, layout, scene, previous = null, keepBias = 1, focus = null) {
   const screen = new Map()
   for (const [id, n] of layout.nodes) {
     const s = projectToScreen(n, camera, vp.width, vp.height)
@@ -389,7 +405,7 @@ function viewState(camera, vp, config, layout, scene, previous = null, keepBias 
     for (const item of scene.info) {
       fade.set(
         item.id,
-        item.isCurrent
+        item.isCurrent || (focus && focus.exempt.has(item.id))
           ? 1
           : depthFadeOf(viewDepth(layout.nodes.get(item.id), camera, forward) - baseDepth, config.fadeStart, config.fadeEnd)
       )
@@ -412,8 +428,7 @@ function viewState(camera, vp, config, layout, scene, previous = null, keepBias 
     camera,
     width: vp.width,
     height: vp.height,
-    hoveredId: null,
-    neighbors: null,
+    focus,
     fadeOn,
     visibleLabels: config.visibleLabels,
     keepBias,
@@ -498,6 +513,23 @@ function evaluateView(camera, vp, vpKey, config, layout, scene) {
     touchCenterPairs: touch ? touch.centerPairs : null,
   }
 
+  // --- M9: 共通ワードの読める件数(上位 arrivalSharedMax 件) ---
+  // 強調が on のプリセットは「強調が最も効いている時点」(減光しきって対象のラベルを選び直した状態)、
+  // off のプリセットは通常の状態で数える
+  let M9 = null
+  if (scene.arrival) {
+    const focus = config.arrivalShared ? focusForArrival(scene.arrival) : null
+    const state = focus ? viewState(camera, vp, config, layout, scene, null, 1, focus) : { reasonOf }
+    const notReadable = {}
+    let readable = 0
+    for (const id of scene.arrival.shared) {
+      const reason = state.reasonOf.get(id)
+      if (reason === 'shown') readable += 1
+      else notReadable[reason] = (notReadable[reason] || 0) + 1
+    }
+    M9 = { readable, of: scene.arrival.shared.length, notReadable, highlighted: !!focus }
+  }
+
   const flat = {
     m1Ratio: M1.ratio,
     m1TopMedianPx: M1.topMedianPx,
@@ -510,8 +542,32 @@ function evaluateView(camera, vp, vpKey, config, layout, scene) {
     m6CenterPairs: M6.centerPairs,
     m6TouchPairs: M6.touchPairs,
     m6TouchCenterPairs: M6.touchCenterPairs,
+    m9Readable: M9 ? M9.readable : null,
   }
-  return { flat, detail: roundAll({ M1, M2, M3, M4, M5, M6 }) }
+  return { flat, detail: roundAll({ M1, M2, M3, M4, M5, M6, M9 }) }
+}
+
+/** 経路の隣り合う中心の組ごとに、共通ワードの件数・段階・狙いの長さ・実際の距離(3D と画面 px) */
+function centerPairs(camera, vp, layout, scene) {
+  const out = []
+  for (const link of layout.links) {
+    if (link.type !== 'trail') continue
+    const a = layout.nodes.get(link.source)
+    const b = layout.nodes.get(link.target)
+    const sa = projectToScreen(a, camera, vp.width, vp.height)
+    const sb = projectToScreen(b, camera, vp.width, vp.height)
+    out.push({
+      from: link.source,
+      to: link.target,
+      shared: link.sharedCount,
+      tier: trailTier(link.sharedCount),
+      springLength: link.springLength,
+      dist3d: Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z),
+      screenPx: Math.hypot(sa.x - sb.x, sa.y - sb.y),
+      onScreen: isOnScreen(sa, vp.width, vp.height) && isOnScreen(sb, vp.width, vp.height),
+    })
+  }
+  return out
 }
 
 /**
@@ -573,6 +629,9 @@ export function summaryRows(result) {
     'M6中心 初期': r.initial.M6.centerPairs,
     M7: r.M7.capped ? `${r.M7.steps}(上限)` : r.M7.steps,
     M8: r.M8.flickers,
+    'M9 初期': r.initial.M9 ? r.initial.M9.readable : '—',
+    'M9 周回平均': r.orbit.mean.m9Readable,
+    'M9 最悪': r.orbit.worst.m9Readable,
   }))
 }
 
@@ -594,7 +653,7 @@ export function toMarkdown(result) {
   lines.push('### 要約(初期視点 / 周回の平均 / 周回の最悪)')
   lines.push('')
   table(
-    ['経路', '画面', 'プリセット', 'M1 比', 'M2 画面', 'M2 3D', 'M3 読める(/10)', 'M5 混み', 'M6 近い組(中心)', 'M7', 'M8'],
+    ['経路', '画面', 'プリセット', 'M1 比', 'M2 画面', 'M2 3D', 'M3 読める(/10)', 'M5 混み', 'M6 近い組(中心)', 'M7', 'M8', 'M9 共通ワード読める'],
     rows.map((r) => [
       ...key(r),
       `${fmt(r.initial.M1.ratio)} / ${fmt(r.orbit.mean.m1Ratio)} / ${fmt(r.orbit.worst.m1Ratio)}`,
@@ -605,7 +664,28 @@ export function toMarkdown(result) {
       `${r.initial.M6.pairs}(${r.initial.M6.centerPairs}) / ${fmt(r.orbit.mean.m6Pairs, 1)}(${fmt(r.orbit.mean.m6CenterPairs, 1)}) / ${fmt(r.orbit.worst.m6Pairs, 0)}(${fmt(r.orbit.worst.m6CenterPairs, 0)})`,
       r.M7.capped ? `${r.M7.steps}(上限)` : String(r.M7.steps),
       String(r.M8.flickers),
+      r.initial.M9
+        ? `${r.initial.M9.readable} / ${fmt(r.orbit.mean.m9Readable, 1)} / ${fmt(r.orbit.worst.m9Readable, 0)}(/${r.initial.M9.of})`
+        : '—',
     ])
+  )
+
+  lines.push('### 中心同士の距離(段階。3D と初期視点の画面 px)')
+  lines.push('')
+  table(
+    ['経路', '画面', 'プリセット', '組', '共通ワード', '段階', '狙いの長さ', '3D 距離', '画面 px', '両方画面内'],
+    rows.flatMap((r) =>
+      r.centers.map((c) => [
+        ...key(r),
+        `${c.from} → ${c.to}`,
+        String(c.shared),
+        c.tier,
+        fmt(c.springLength, 1),
+        fmt(c.dist3d, 1),
+        fmt(c.screenPx, 1),
+        c.onScreen ? '○' : '×',
+      ])
+    )
   )
 
   lines.push('### M1 上位と下位の中心からの距離(初期視点。中央値。画面 px と 3D)')

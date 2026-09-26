@@ -39,6 +39,15 @@ import {
   TRAIL_SHARED_CAP,
   SHARED_PACKETS,
   SHARED_PACKET_PX,
+  TRAIL_TIERED,
+  TRAIL_LEN_NONE,
+  TRAIL_LEN_FEW,
+  TRAIL_LEN_MID,
+  TRAIL_LEN_MANY,
+  ARRIVAL_SHARED,
+  ARRIVAL_SHARED_MS,
+  ARRIVAL_SHARED_FADE_MS,
+  ARRIVAL_SHARED_MAX,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -126,6 +135,24 @@ export interface VizConfig {
   sharedPackets: boolean
   /** 共通ワードを通るパケットの半径(px) */
   sharedPacketPx: number
+  /** 中心同士の距離を共通ワードの件数の段階で決める(rev4。distanceByScore も on のときに効く) */
+  trailTiered: boolean
+  /** 共通ワード 0 件(none)の中心同士の線の自然長 */
+  trailLenNone: number
+  /** 1〜3件(few) */
+  trailLenFew: number
+  /** 4〜7件(mid) */
+  trailLenMid: number
+  /** 8件以上(many) */
+  trailLenMany: number
+  /** 到着時の共通ワード強調(SPEC 6.10) */
+  arrivalShared: boolean
+  /** 強調を続ける時間(ms) */
+  arrivalSharedMs: number
+  /** 通常の表示に戻す時間(ms) */
+  arrivalSharedFadeMs: number
+  /** ラベルを保証する共通ワードの上限 */
+  arrivalSharedMax: number
 }
 
 /**
@@ -153,12 +180,21 @@ const RELATION_VALUES = {
   trailSharedBonus: TRAIL_SHARED_BONUS,
   trailSharedCap: TRAIL_SHARED_CAP,
   sharedPacketPx: SHARED_PACKET_PX,
+  trailLenNone: TRAIL_LEN_NONE,
+  trailLenFew: TRAIL_LEN_FEW,
+  trailLenMid: TRAIL_LEN_MID,
+  trailLenMany: TRAIL_LEN_MANY,
+  arrivalSharedMs: ARRIVAL_SHARED_MS,
+  arrivalSharedFadeMs: ARRIVAL_SHARED_FADE_MS,
+  arrivalSharedMax: ARRIVAL_SHARED_MAX,
 }
 
 /** 関連の強さの on/off。current・rev2・mesh はすべて off(従来の配置・見た目を保つ) */
 const RELATION_OFF = {
   distanceByScore: DISTANCE_BY_SCORE,
   sharedPackets: SHARED_PACKETS,
+  trailTiered: TRAIL_TIERED,
+  arrivalShared: ARRIVAL_SHARED,
 }
 
 /** rev2 のラベルの深さフェード。current はオフ(従来の見た目を保つ) */
@@ -266,6 +302,24 @@ PRESETS.rev3 = {
   sharedPackets: true,
 }
 
+/**
+ * rev4 = rev3 から「強調を足す」のをやめ、「読めることを保証する」方針に切り替えたもの(タスク07)。
+ *   - 共通ワードのパケットは off(rev2 と同じ「今の中心 → 上位の子」の流れ)
+ *   - 到着時の共通ワード強調を on(SPEC 6.10)
+ *   - 子の距離は使わない(子の線はすべて springLength)。3D では差がほとんど読み取れず、
+ *     極端に差をつけると中心付近が混むため
+ *   - 中心同士の距離は、相互リンクを使わず共通ワードの件数の段階で決める(trailTiered)
+ * rev3 は 06 の基準値として残す(2026-09-26 利用者と合意)。既定にはせず ?preset=rev4 で確かめる
+ */
+PRESETS.rev4 = {
+  ...PRESETS.rev3,
+  sharedPackets: false,
+  arrivalShared: true,
+  childSpringMin: SPRING_LENGTH,
+  childSpringMax: SPRING_LENGTH,
+  trailTiered: true,
+}
+
 // 何も指定しないときのプリセット。rev2 の改善を既定にし、
 // current は ?preset=current で従来の見た目と比べるために残す
 export const DEFAULT_PRESET = 'rev2'
@@ -300,6 +354,11 @@ export const DEFAULT_PRESET = 'rev2'
  *   trail*Bonus    縮めすぎても childSpringMin で止まるので、大きめまで許す
  *   trailSharedCap 共通ワードは多くても表示中の件数(neighborLimit + moreMax)まで
  *   sharedPacketPx        1 未満は見えない。8 を超えるとノード(一次 6〜9px)と見分けにくい
+ *   trailLen*             childSpring* と同じく、画面に収まる範囲まで。段階の順(None > Many)は
+ *                         入れ替えても壊れない(近い・遠いの意味が逆になるだけ)
+ *   arrivalSharedMs       0 で強調しない。10 秒を超えると、次の操作までずっと減光しているのと変わらない
+ *   arrivalSharedFadeMs   0 で即時に戻る。3 秒を超えると戻りきる前に次の操作が来る
+ *   arrivalSharedMax      0 で共通ワードのラベルを保証しない。上限は表示中の件数(neighborLimit + moreMax)まで
  */
 export const RANGES: Record<string, { min: number; max: number; step?: number }> = {
   nodeLimit: { min: 8, max: 1000 },
@@ -330,6 +389,13 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   trailSharedBonus: { min: 0, max: 50, step: 0.5 },
   trailSharedCap: { min: 0, max: 150 },
   sharedPacketPx: { min: 1, max: 8, step: 0.1 },
+  trailLenNone: { min: 1, max: 600, step: 1 },
+  trailLenFew: { min: 1, max: 600, step: 1 },
+  trailLenMid: { min: 1, max: 600, step: 1 },
+  trailLenMany: { min: 1, max: 600, step: 1 },
+  arrivalSharedMs: { min: 0, max: 10000, step: 100 },
+  arrivalSharedFadeMs: { min: 0, max: 3000, step: 50 },
+  arrivalSharedMax: { min: 0, max: 150 },
 }
 
 /** 力学に関わる項目。変えたらシミュレーションを再開する(配置は作り直さない) */
@@ -349,6 +415,12 @@ export const LAYOUT_KEYS = [
   'trailMutualBonus',
   'trailSharedBonus',
   'trailSharedCap',
+  // 中心同士の距離の段階(タスク07。rev4)
+  'trailTiered',
+  'trailLenNone',
+  'trailLenFew',
+  'trailLenMid',
+  'trailLenMany',
 ] as const
 
 /**
@@ -369,6 +441,11 @@ export const VISUAL_KEYS = [
   // 関連の強さのうち見た目だけに効くもの(SPEC 6.9)
   'sharedPackets',
   'sharedPacketPx',
+  // 到着時の共通ワード強調(SPEC 6.10)
+  'arrivalShared',
+  'arrivalSharedMs',
+  'arrivalSharedFadeMs',
+  'arrivalSharedMax',
 ] as const
 
 /** デバッグパネルの relation フォルダに並べる項目(上の LAYOUT_KEYS・VISUAL_KEYS の一部) */
@@ -380,8 +457,17 @@ export const RELATION_KEYS = [
   'trailMutualBonus',
   'trailSharedBonus',
   'trailSharedCap',
+  'trailTiered',
+  'trailLenNone',
+  'trailLenFew',
+  'trailLenMid',
+  'trailLenMany',
   'sharedPackets',
   'sharedPacketPx',
+  'arrivalShared',
+  'arrivalSharedMs',
+  'arrivalSharedFadeMs',
+  'arrivalSharedMax',
 ] as const
 
 /** URL や leva から来た値を VizConfig の型に揃える。不正な値は base の値を使う */
@@ -520,6 +606,30 @@ export function coerceConfig(
       base.sharedPacketPx,
       r.sharedPacketPx.min,
       r.sharedPacketPx.max
+    ),
+    trailTiered: bool(raw.trailTiered, base.trailTiered),
+    trailLenNone: float(raw.trailLenNone, base.trailLenNone, r.trailLenNone.min, r.trailLenNone.max),
+    trailLenFew: float(raw.trailLenFew, base.trailLenFew, r.trailLenFew.min, r.trailLenFew.max),
+    trailLenMid: float(raw.trailLenMid, base.trailLenMid, r.trailLenMid.min, r.trailLenMid.max),
+    trailLenMany: float(raw.trailLenMany, base.trailLenMany, r.trailLenMany.min, r.trailLenMany.max),
+    arrivalShared: bool(raw.arrivalShared, base.arrivalShared),
+    arrivalSharedMs: int(
+      raw.arrivalSharedMs,
+      base.arrivalSharedMs,
+      r.arrivalSharedMs.min,
+      r.arrivalSharedMs.max
+    ),
+    arrivalSharedFadeMs: int(
+      raw.arrivalSharedFadeMs,
+      base.arrivalSharedFadeMs,
+      r.arrivalSharedFadeMs.min,
+      r.arrivalSharedFadeMs.max
+    ),
+    arrivalSharedMax: int(
+      raw.arrivalSharedMax,
+      base.arrivalSharedMax,
+      r.arrivalSharedMax.min,
+      r.arrivalSharedMax.max
     ),
   }
 }

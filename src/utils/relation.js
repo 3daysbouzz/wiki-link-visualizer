@@ -6,7 +6,10 @@
  *   - 線ごとのバネの自然長(computeEdgeSpringLength)
  *   - 前後の中心に共通する関連ワード(sharedTitles)
  *   - データパケットを流す経路(packetRoutesFor)
+ *   - 中心同士の距離の段階(trailTier・trailTierLength。rev4)
+ *   - 到着時の共通ワード強調の対象(arrivalHighlightSet)と、始めるかの判定(startsArrival)。SPEC 6.10
  */
+import { TRAIL_TIER_FEW_MAX, TRAIL_TIER_MID_MAX } from '../constants.js'
 
 const clamp01 = (x) => Math.min(Math.max(x, 0), 1)
 const lerp = (a, b, t) => a + (b - a) * t
@@ -34,7 +37,9 @@ export function normalizeScore(score, weights) {
  * on なら線の種類で分ける:
  *   child … 関連が強い(relScore が高い)ほど短い。childSpringMax → childSpringMin を線形に
  *   trail … 中心同士。基準の trailSpringBase から、相互リンクと共通ワードの数だけ縮める。
- *           childSpringMin より短くはしない
+ *           childSpringMin より短くはしない。
+ *           trailTiered が on(rev4)なら、代わりに共通ワードの件数の段階で決める(trailTierLength)。
+ *           段階の長さには childSpringMin の下限を掛けない
  *
  * trail の式は child の値(下限の childSpringMin を除く)を参照しない。
  * 中心同士の距離は将来、子と独立した基準に変える可能性があるので、
@@ -50,6 +55,7 @@ export function computeEdgeSpringLength(edge, config) {
   }
 
   if (edge.type === 'trail') {
+    if (config.trailTiered) return trailTierLength(trailTier(edge.sharedCount || 0), config)
     const shared = Math.min(edge.sharedCount || 0, config.trailSharedCap)
     const length =
       config.trailSpringBase -
@@ -114,4 +120,86 @@ export function packetRoutesFor(trail, expansions, config, count) {
   }
 
   return children.slice(0, count).map((l) => [current, l.title])
+}
+
+/**
+ * 中心同士の共通ワードの件数を、距離の段階に分ける(タスク07。2026-09-26 利用者と決定)。
+ *   0 … none / 1〜TRAIL_TIER_FEW_MAX … few / 〜TRAIL_TIER_MID_MAX … mid / それより多い … many
+ * 細かく比例させず大きな段階で分けるのは、説明しなくても「共通ワードで距離が変わっている」と
+ * 気づいてもらうため(段階の違いがはっきり見えることを優先する)
+ * @returns {'none'|'few'|'mid'|'many'}
+ */
+export function trailTier(sharedCount) {
+  const n = sharedCount || 0
+  if (n <= 0) return 'none'
+  if (n <= TRAIL_TIER_FEW_MAX) return 'few'
+  if (n <= TRAIL_TIER_MID_MAX) return 'mid'
+  return 'many'
+}
+
+/** 段階ごとの中心同士の線の自然長(config の trailLenNone〜trailLenMany) */
+export function trailTierLength(tier, config) {
+  switch (tier) {
+    case 'none':
+      return config.trailLenNone
+    case 'few':
+      return config.trailLenFew
+    case 'mid':
+      return config.trailLenMid
+    default:
+      return config.trailLenMany
+  }
+}
+
+/**
+ * 到着時の共通ワード強調で明るく残すもの(SPEC 6.10。タスク07)。
+ *
+ *   ノード … 前の中心・今の中心・共通ワードの上位 max 件(今の中心の展開結果の順 = 関連スコアの順)
+ *   線     … 前の中心 ↔ 共通ワード、共通ワード ↔ 今の中心、前の中心 ↔ 今の中心
+ *   labelOrder … ラベルが場所を取る順。今の中心 → 前の中心 → 共通ワード(関連スコアの順)
+ *
+ * 軌跡が2件未満・trailEnabled=false(前の中心が画面に出ない)・共通ワードが 0 件なら null(何もしない)
+ *
+ * @param {string[]} trail
+ * @param {Map<string, {title:string}[]>} expansions
+ * @param {number} max ラベルを保証する共通ワードの上限(arrivalSharedMax)
+ * @param {{trailEnabled?:boolean}} [config]
+ * @returns {{prev:string, current:string, shared:string[], nodes:Set<string>, links:[string,string][], labelOrder:string[]} | null}
+ */
+export function arrivalHighlightSet(trail, expansions, max, config = {}) {
+  if (config.trailEnabled === false || trail.length < 2) return null
+  const prev = trail[trail.length - 2]
+  const current = trail[trail.length - 1]
+  const shared = sharedTitles(expansions.get(prev), expansions.get(current), [prev, current]).slice(
+    0,
+    Math.max(0, max)
+  )
+  if (shared.length === 0) return null
+  const links = [[prev, current]]
+  for (const title of shared) {
+    links.push([prev, title])
+    links.push([title, current])
+  }
+  return {
+    prev,
+    current,
+    shared,
+    nodes: new Set([prev, current, ...shared]),
+    links,
+    labelOrder: [current, prev, ...shared],
+  }
+}
+
+/**
+ * 到着時の強調を始めるか。軌跡の末尾に新しい記事を1件足して進んだときだけ true
+ * (ノードのクリック・サイドバーの隣接記事のクリック)。
+ * 戻る(軌跡を短く切る)・検索やリセット(作り直す)・追加表示(軌跡が変わらない)・
+ * リダイレクトで経路上の記事が末尾に並び替わった場合は false
+ */
+export function startsArrival(prevTrail, nextTrail) {
+  if (nextTrail.length !== prevTrail.length + 1 || prevTrail.length === 0) return false
+  for (let i = 0; i < prevTrail.length; i++) {
+    if (prevTrail[i] !== nextTrail[i]) return false
+  }
+  return !prevTrail.includes(nextTrail[nextTrail.length - 1])
 }

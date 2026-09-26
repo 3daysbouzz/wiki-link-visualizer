@@ -11,6 +11,10 @@ import {
   computeEdgeSpringLength,
   sharedTitles,
   packetRoutesFor,
+  trailTier,
+  trailTierLength,
+  arrivalHighlightSet,
+  startsArrival,
 } from '../src/utils/relation.js'
 import { buildGraph } from '../src/utils/buildGraph.js'
 import { readUrlState } from '../src/config/urlState.js'
@@ -27,6 +31,17 @@ import {
   SHARED_PACKETS,
   SHARED_PACKET_PX,
   PACKET_PX,
+  TRAIL_TIER_FEW_MAX,
+  TRAIL_TIER_MID_MAX,
+  TRAIL_TIERED,
+  TRAIL_LEN_NONE,
+  TRAIL_LEN_FEW,
+  TRAIL_LEN_MID,
+  TRAIL_LEN_MANY,
+  ARRIVAL_SHARED,
+  ARRIVAL_SHARED_MS,
+  ARRIVAL_SHARED_FADE_MS,
+  ARRIVAL_SHARED_MAX,
 } from '../src/constants.js'
 
 const ON = PRESETS.rev3
@@ -308,5 +323,157 @@ describe('相互リンクの脈動(タスク07で外した)', () => {
     assert.equal(r.presetName, 'rev3')
     assert.deepEqual(r.overrides, [])
     for (const key of REMOVED) assert.equal(key in r.config, false, key)
+  })
+})
+
+describe('中心同士の距離の段階(trailTier。タスク07)', () => {
+  test('0 → none、1・3 → few、4・7 → mid、8・15 → many(境目の両側)', () => {
+    assert.equal(trailTier(0), 'none')
+    assert.equal(trailTier(1), 'few')
+    assert.equal(trailTier(3), 'few')
+    assert.equal(trailTier(4), 'mid')
+    assert.equal(trailTier(7), 'mid')
+    assert.equal(trailTier(8), 'many')
+    assert.equal(trailTier(15), 'many')
+    assert.equal(trailTier(undefined), 'none')
+    assert.equal(TRAIL_TIER_FEW_MAX, 3)
+    assert.equal(TRAIL_TIER_MID_MAX, 7)
+  })
+
+  test('rev4 では段階ごとの長さになり、childSpringMin の下限を掛けない', () => {
+    const c = { ...PRESETS.rev4, childSpringMin: 100 }
+    const len = (n) => computeEdgeSpringLength({ type: 'trail', sharedCount: n, mutual: 1 }, c)
+    assert.equal(len(0), c.trailLenNone)
+    assert.equal(len(2), c.trailLenFew)
+    assert.equal(len(5), c.trailLenMid)
+    assert.equal(len(12), c.trailLenMany)
+    assert.equal(trailTierLength('many', c), c.trailLenMany)
+    // 相互リンクは使わない
+    assert.equal(
+      computeEdgeSpringLength({ type: 'trail', sharedCount: 5, mutual: 0 }, c),
+      computeEdgeSpringLength({ type: 'trail', sharedCount: 5, mutual: 1 }, c)
+    )
+  })
+
+  test('trailTiered=false なら 05 の計算と同じ長さ', () => {
+    const c = { ...PRESETS.rev3, trailTiered: false }
+    const edge = { type: 'trail', sharedCount: 5, mutual: 1 }
+    assert.equal(
+      computeEdgeSpringLength(edge, c),
+      Math.max(c.childSpringMin, c.trailSpringBase - c.trailMutualBonus - c.trailSharedBonus * 5)
+    )
+  })
+
+  test('rev4 の子の線はすべて springLength(子の距離は使わない)', () => {
+    const c = PRESETS.rev4
+    for (const relScore of [0, 0.5, 1]) {
+      assert.equal(computeEdgeSpringLength({ type: 'child', relScore }, c), SPRING_LENGTH)
+    }
+  })
+})
+
+describe('到着時の共通ワード強調の対象(arrivalHighlightSet。タスク07)', () => {
+  const exp = new Map([
+    ['A', links(['x', 'y', 'B', 'z', 'w'])],
+    ['B', links(['w', 'A', 'q', 'y', 'x', 'z'])],
+  ])
+
+  test('前の中心・今の中心・共通ワードの上位 max 件と、その間の線が入る。並びは今の中心の順', () => {
+    const set = arrivalHighlightSet(['A', 'B'], exp, 3)
+    assert.equal(set.prev, 'A')
+    assert.equal(set.current, 'B')
+    // B の順(w, y, x, z)のうち上位3件。中心自身(A)は数えない
+    assert.deepEqual(set.shared, ['w', 'y', 'x'])
+    assert.deepEqual([...set.nodes].sort(), ['A', 'B', 'w', 'x', 'y'])
+    assert.deepEqual(set.labelOrder, ['B', 'A', 'w', 'y', 'x'])
+    assert.deepEqual(set.links, [
+      ['A', 'B'],
+      ['A', 'w'], ['w', 'B'],
+      ['A', 'y'], ['y', 'B'],
+      ['A', 'x'], ['x', 'B'],
+    ])
+  })
+
+  test('共通ワードが 0 件・軌跡が2件未満・trailEnabled=false のときは null', () => {
+    const none = new Map([['A', links(['x'])], ['B', links(['y'])]])
+    assert.equal(arrivalHighlightSet(['A', 'B'], none, 8), null)
+    assert.equal(arrivalHighlightSet(['B'], exp, 8), null)
+    assert.equal(arrivalHighlightSet(['A', 'B'], exp, 8, { trailEnabled: false }), null)
+    assert.equal(arrivalHighlightSet(['A', 'B'], exp, 0), null)
+  })
+
+  test('3件以上の軌跡では末尾の2件を使う', () => {
+    const e = new Map([...exp, ['C', links(['x', 'B', 'q'])]])
+    const set = arrivalHighlightSet(['A', 'B', 'C'], e, 8)
+    assert.equal(set.prev, 'B')
+    assert.deepEqual(set.shared, ['x', 'q'])
+  })
+})
+
+describe('到着時の強調を始めるか(startsArrival)', () => {
+  test('末尾に新しい記事を1件足して進んだときだけ true', () => {
+    assert.equal(startsArrival(['A'], ['A', 'B']), true)
+    assert.equal(startsArrival(['A', 'B'], ['A', 'B', 'C']), true)
+  })
+
+  test('戻る・検索・URL からの復元・追加表示・並び替えでは false', () => {
+    assert.equal(startsArrival(['A', 'B', 'C'], ['A', 'B']), false) // 戻る
+    assert.equal(startsArrival(['A', 'B'], ['X']), false) // 検索・リセット
+    assert.equal(startsArrival([], ['A', 'B']), false) // URL からの復元(空から一度に組む)
+    assert.equal(startsArrival(['A', 'B'], ['A', 'B']), false) // 追加表示(軌跡は変わらない)
+    assert.equal(startsArrival(['A', 'B', 'C'], ['A', 'C', 'B']), false) // リダイレクトで並び替わった
+    assert.equal(startsArrival(['A', 'B'], ['A', 'B', 'A']), false) // 経路上の記事
+  })
+})
+
+describe('プリセット rev4(タスク07)', () => {
+  test('rev3 から sharedPackets・arrivalShared・子の距離・trailTiered だけが違う', () => {
+    const DIFF = ['sharedPackets', 'arrivalShared', 'childSpringMin', 'childSpringMax', 'trailTiered']
+    for (const [key, v] of Object.entries(PRESETS.rev3)) {
+      if (DIFF.includes(key)) continue
+      assert.equal(PRESETS.rev4[key], v, `${key} が rev3 と違う`)
+    }
+    assert.equal(PRESETS.rev4.sharedPackets, false)
+    assert.equal(PRESETS.rev4.arrivalShared, true)
+    assert.equal(PRESETS.rev4.trailTiered, true)
+    assert.equal(PRESETS.rev4.distanceByScore, true)
+  })
+
+  test('current・rev2・mesh・rev3 は到着時の強調と段階が off', () => {
+    for (const name of ['current', 'rev2', 'mesh', 'rev3']) {
+      assert.equal(PRESETS[name].arrivalShared, false, name)
+      assert.equal(PRESETS[name].trailTiered, false, name)
+    }
+  })
+
+  test('順位付けの重みは rev2・rev3 と同じ(06 の道具で同じ展開結果のまま比べられる)', () => {
+    for (const key of ['wMorelike', 'wMutual', 'wLead', 'neighborLimit', 'seed']) {
+      assert.equal(PRESETS.rev4[key], PRESETS.rev2[key], key)
+    }
+  })
+
+  test('current の新しい項目は constants.js の既定値と同じで、数値項目は RANGES に範囲がある', () => {
+    const c = PRESETS.current
+    assert.equal(c.trailTiered, TRAIL_TIERED)
+    assert.equal(c.trailLenNone, TRAIL_LEN_NONE)
+    assert.equal(c.trailLenFew, TRAIL_LEN_FEW)
+    assert.equal(c.trailLenMid, TRAIL_LEN_MID)
+    assert.equal(c.trailLenMany, TRAIL_LEN_MANY)
+    assert.equal(c.arrivalShared, ARRIVAL_SHARED)
+    assert.equal(c.arrivalSharedMs, ARRIVAL_SHARED_MS)
+    assert.equal(c.arrivalSharedFadeMs, ARRIVAL_SHARED_FADE_MS)
+    assert.equal(c.arrivalSharedMax, ARRIVAL_SHARED_MAX)
+    for (const key of ['trailLenNone', 'trailLenFew', 'trailLenMid', 'trailLenMany', 'arrivalSharedMs', 'arrivalSharedFadeMs', 'arrivalSharedMax']) {
+      assert.ok(RANGES[key], key)
+      assert.ok(c[key] >= RANGES[key].min && c[key] <= RANGES[key].max, key)
+    }
+  })
+
+  test('URL で rev4 と新しい項目を指定できる', () => {
+    const r = readUrlState('?preset=rev4&arrivalSharedMs=1500&trailLenFew=140')
+    assert.equal(r.presetName, 'rev4')
+    assert.equal(r.config.arrivalShared, true)
+    assert.equal(r.config.arrivalSharedMs, 1500)
+    assert.equal(r.config.trailLenFew, 140)
   })
 })

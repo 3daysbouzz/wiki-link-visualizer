@@ -7,6 +7,8 @@ import { stepForces, spawnScatter, fitCamera } from '../utils/forceLayout.js'
 import { projectToScreen, viewDepth } from '../utils/screenProjection.js'
 import {
   selectLabels,
+  focusForHover,
+  focusForArrival,
   labelDisplayText,
   labelFont,
   labelTextureSize,
@@ -473,14 +475,40 @@ const Graph3D = forwardRef(function Graph3D(
       // 記事名 => ラベルの優先表示を終える時刻(performance.now)
       labelBoost: new Map(),
       pointer: new THREE.Vector2(),
+      // 到着時の共通ワード強調(SPEC 6.10)。
+      // arrival: 強調中の対象 { nodes, linkKeys, labelOrder, until, fadeMs, ignoreHover } / null
+      arrival: null,
+      // 見た目の補間にかける時間(秒)。ふだんはホバーと同じ。強調が時間で終わるときだけ
+      // arrivalSharedFadeMs にして、ゆっくり戻す。0 なら補間せず即時(prefers-reduced-motion)
+      transitionS: HOVER_TRANSITION_S,
+      // 動きを減らす設定(OS の「視差効果を減らす」など)。強調の減光と戻りを即時にする
+      reducedMotion: false,
     }
     ctxRef.current = ctx
 
+    // prefers-reduced-motion は途中で変わることがあるので購読する
+    const motionQuery =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null
+    const onMotionChange = () => {
+      ctx.reducedMotion = !!(motionQuery && motionQuery.matches)
+    }
+    onMotionChange()
+    if (motionQuery) motionQuery.addEventListener('change', onMotionChange)
+
     // 手動でカメラを操作したら追従をやめる(勝手に動くと操作を奪われて不快)
+    // 到着時の強調も同じ理由で打ち切る(移動中なら、着いてから始める予定も取り消す)
     const onControlsStart = () => {
       ctx.followId = null
+      if (ctx.travel) ctx.travel.arrival = null
+      cancelArrival(ctx)
     }
     controls.addEventListener('start', onControlsStart)
+
+    // キー操作(Backspace で戻るなど)でも強調を打ち切る。操作を奪わないため
+    const onKeyDown = () => cancelArrival(ctx)
+    window.addEventListener('keydown', onKeyDown)
 
     // ---- リサイズ対応 ----
     const resize = () => {
@@ -622,6 +650,11 @@ const Graph3D = forwardRef(function Graph3D(
 
         if (id === ctx.hoveredId) return
         ctx.hoveredId = id
+        // 強調中にほかのノードへ乗ったら、強調をやめてホバー表示にする。
+        // 何も無いところへ外れただけなら強調は続ける
+        if (id !== null) cancelArrival(ctx)
+        // 強調の戻り(arrivalSharedFadeMs)の途中でも、ホバーはいつもの速さで切り替える
+        ctx.transitionS = HOVER_TRANSITION_S
         applyHighlight(ctx)
         updateLabelVisibility(ctx) // ホバー変化時は即座に反映する
         if (hoverHandlerRef.current) {
@@ -676,6 +709,7 @@ const Graph3D = forwardRef(function Graph3D(
       updatePackets(ctx, t)
       updateTween(ctx)
       updateFollow(ctx)
+      updateArrival(ctx, now)
       controls.update()
 
       // ラベルの表示判定は毎フレームやると重いので間隔を空ける
@@ -700,6 +734,8 @@ const Graph3D = forwardRef(function Graph3D(
       el.removeEventListener('pointermove', onPointerMove)
       el.removeEventListener('pointerleave', onPointerLeave)
       controls.removeEventListener('start', onControlsStart)
+      window.removeEventListener('keydown', onKeyDown)
+      if (motionQuery) motionQuery.removeEventListener('change', onMotionChange)
       controls.dispose()
 
       for (const node of ctx.nodes.values()) {
@@ -819,6 +855,17 @@ const Graph3D = forwardRef(function Graph3D(
           dist: Math.round(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) * 10) / 10,
         }
       })
+    },
+
+    /** 到着時の共通ワード強調の状態(デバッグ用。SPEC 6.10)。強調していなければ null */
+    getArrivalState() {
+      const ctx = ctxRef.current
+      if (!ctx || !ctx.arrival) return null
+      return {
+        nodes: Array.from(ctx.arrival.nodes),
+        labelOrder: ctx.arrival.labelOrder,
+        remainingMs: Math.max(0, Math.round(ctx.arrival.until - performance.now())),
+      }
     },
 
     /**
@@ -945,9 +992,11 @@ const Graph3D = forwardRef(function Graph3D(
      * 見る角度と距離は保ったまま注視点だけを移す。移動中は目的地以外を減光する。
      * 到着後は followNode に引き継ぎ、レイアウトで動く目的地を追い続ける。
      */
-    travelTo(id) {
+    travelTo(id, arrival = null) {
       const ctx = ctxRef.current
       if (!ctx || !ctx.nodes.has(id)) return
+      cancelArrival(ctx)
+      ctx.transitionS = HOVER_TRANSITION_S
       ctx.followId = null
       const dir = ctx.camera.position.clone().sub(ctx.controls.target)
       if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1)
@@ -957,12 +1006,17 @@ const Graph3D = forwardRef(function Graph3D(
         duration: TRAVEL_MS,
         ease: easeTravel,
         onDone: () => {
+          // 到着時の共通ワード強調(SPEC 6.10)は、移動中の減光と重ねないよう着いてから始める。
+          // 移動中に回したら取り消している(ctx.travel.arrival = null)
+          const pending = ctx.travel && ctx.travel.arrival
           ctx.travel = null
           ctx.followId = id
+          if (pending) startArrival(ctx, pending)
           applyHighlight(ctx)
+          updateLabelVisibility(ctx)
         },
       })
-      ctx.travel = { id }
+      ctx.travel = { id, arrival }
       applyHighlight(ctx)
     },
 
@@ -982,7 +1036,9 @@ const Graph3D = forwardRef(function Graph3D(
     /** 注視点に向かってカメラを寄せる(factor<1)/引く(factor>1) */
     zoomBy(factor) {
       const ctx = ctxRef.current
-      if (!ctx || ctx.tween) return
+      if (!ctx) return
+      cancelArrival(ctx)
+      if (ctx.tween) return
       const target = ctx.controls.target.clone()
       const offset = ctx.camera.position.clone().sub(target).multiplyScalar(factor)
       startTween(ctx, {
@@ -1000,6 +1056,8 @@ const Graph3D = forwardRef(function Graph3D(
     shakeNode(id, ratio = 1) {
       const ctx = ctxRef.current
       if (!ctx || !ctx.nodes.has(id)) return
+      // 追加表示の操作なので、到着時の強調は打ち切る
+      cancelArrival(ctx)
       ctx.shake = { id, start: performance.now(), amp: MORE_SHAKE_PX * ratio }
     },
 
@@ -1207,6 +1265,8 @@ function syncGraph(ctx, graphData, currentId) {
 
   // 遷移中に目的地が消えた(再検索など)ら遷移状態を捨てる
   if (ctx.travel && !ctx.nodes.has(ctx.travel.id)) ctx.travel = null
+  // 顔ぶれが変わった(戻る・検索・リセット・追加表示)ら、到着時の強調は打ち切る
+  if (structureChanged) cancelArrival(ctx, { refresh: false })
 
   applyHighlight(ctx)
   updateLabelVisibility(ctx)
@@ -1253,16 +1313,29 @@ function rebuildEdgeBuffers(ctx) {
 }
 
 // ==========================================================================
-// ホバー時の隣接ハイライト (SPEC 6.1) と遷移中の減光
+// ホバー時の隣接ハイライト (SPEC 6.1)・到着時の共通ワード強調 (6.10)・遷移中の減光
 //
 // ここでは「目標値」だけを決める。実際の見た目は updateVisuals が
-// 毎フレーム目標へ補間する(HOVER_TRANSITION_S で滑らかに切り替わる)。
+// 毎フレーム目標へ補間する(ctx.transitionS で滑らかに切り替わる)。
+// ホバーと到着時の強調は同じ「注目状態」の仕組みに乗せる。ホバーが優先
+// (強調中にほかのノードへ乗ると強調は打ち切られるので、両方が同時に効くことはない)
 // ==========================================================================
+
+/**
+ * いま効いているホバーの対象。グラフが変わって消えたノードはホバーなしとして扱う。
+ * 強調を始めた時点で乗っていたノード(クリックした = 新しい中心)は、強調のあいだ無視する。
+ * クリックした直後はカーソルがそのノードに乗ったままなので、無視しないと強調がすぐ消えてしまう
+ */
+function activeHoverId(ctx) {
+  const id = ctx.hoveredId && ctx.adjacency.has(ctx.hoveredId) ? ctx.hoveredId : null
+  if (id && ctx.arrival && id === ctx.arrival.ignoreHover) return null
+  return id
+}
+
 function applyHighlight(ctx) {
-  // グラフが変わってホバー中のノードが消えている場合はホバーなしとして扱う
-  const hoveredId =
-    ctx.hoveredId && ctx.adjacency.has(ctx.hoveredId) ? ctx.hoveredId : null
+  const hoveredId = activeHoverId(ctx)
   const neighbors = hoveredId ? ctx.adjacency.get(hoveredId) : null
+  const arrival = !hoveredId && ctx.arrival ? ctx.arrival : null
   const travelId = ctx.travel ? ctx.travel.id : null
 
   for (const node of ctx.nodes.values()) {
@@ -1278,6 +1351,10 @@ function applyHighlight(ctx) {
       } else if (!(neighbors && neighbors.has(node.id))) {
         t.opacity = node.baseOpacity * HOVER_DIM_RATIO
       }
+    } else if (arrival && !arrival.nodes.has(node.id)) {
+      // 到着時の強調: 対象(前後の中心と共通ワード)以外をホバーと同じ比率まで落とす。
+      // 対象は明るくも大きくもしない(明るさの差だけで見せる)
+      t.opacity = node.baseOpacity * HOVER_DIM_RATIO
     }
     // 遷移中は目的地だけを主役にする
     if (travelId && node.id !== travelId) {
@@ -1296,6 +1373,8 @@ function applyHighlight(ctx) {
       } else {
         bright = base * HOVER_DIM_RATIO
       }
+    } else if (arrival && !arrival.linkKeys.has(`${link.source}->${link.target}`)) {
+      bright = base * HOVER_DIM_RATIO
     }
     if (travelId && link.source !== travelId && link.target !== travelId) {
       bright = Math.min(bright, TRAVEL_DIM_OPACITY)
@@ -1310,7 +1389,7 @@ function applyHighlight(ctx) {
 // 現在地より奥にあるラベルほど薄くし、fadeEnd より奥では消す。
 // 深さ = カメラの視線方向に沿った距離(表示位置 displayPosition で測る)。
 //   delta = depth(ノード) − depth(現在地)   正の値ほど現在地より奥
-// 現在地とホバー中のノードは常に 1(どの角度でも読めるように)。
+// 現在地・ホバー中のノード・到着時の強調の対象は常に 1(どの角度でも読めるように。SPEC 6.10)。
 // ここでは目標値だけを決める。実際の不透明度は updateVisuals がホバーと同じ方式で補間する
 // (ラベルの選び直しは 200ms 間隔なので、それに合わせるとカクつくため)
 // ==========================================================================
@@ -1325,8 +1404,10 @@ function updateDepthFadeTargets(ctx) {
   camera.getWorldDirection(_forward)
   const depthOf = (node) => viewDepth(displayPosition(ctx, node, _v1), camera, _forward)
   const baseDepth = depthOf(current)
+  const hoveredId = activeHoverId(ctx)
+  const arrival = !hoveredId && ctx.arrival ? ctx.arrival : null
   for (const node of ctx.nodes.values()) {
-    if (node.isCurrent || node.id === ctx.hoveredId) {
+    if (node.isCurrent || node.id === hoveredId || (arrival && arrival.nodes.has(node.id))) {
       node.labelFadeTarget = 1
     } else {
       node.labelFadeTarget = depthFadeOf(depthOf(node) - baseDepth, fadeStart, fadeEnd)
@@ -1339,7 +1420,8 @@ function updateDepthFadeTargets(ctx) {
 // ==========================================================================
 function updateVisuals(ctx, t, dt) {
   // 指数補間: HOVER_TRANSITION_S でおおむね目標に達する
-  const k = 1 - Math.exp(-dt / (HOVER_TRANSITION_S / 3))
+  // ctx.transitionS でおおむね目標に達する。0 なら即時(prefers-reduced-motion の強調)
+  const k = ctx.transitionS > 0 ? 1 - Math.exp(-dt / (ctx.transitionS / 3)) : 1
 
   updateDepthFadeTargets(ctx)
   const swapFade = ctx.visual.labelDepthFade
@@ -1613,9 +1695,13 @@ function updatePackets(ctx, t) {
 // ラベルはノードの右(画面外に出るなら左)、起点だけは真下に置く。
 // ==========================================================================
 function updateLabelVisibility(ctx) {
-  const hoveredId =
-    ctx.hoveredId && ctx.adjacency.has(ctx.hoveredId) ? ctx.hoveredId : null
-  const neighbors = hoveredId ? ctx.adjacency.get(hoveredId) : null
+  const hoveredId = activeHoverId(ctx)
+  // 注目状態(SPEC 6.10)。ホバーが優先、なければ到着時の強調
+  const focus = hoveredId
+    ? focusForHover(hoveredId, ctx.adjacency.get(hoveredId))
+    : ctx.arrival
+      ? focusForArrival(ctx.arrival)
+      : null
 
   // 追加表示で足したノードは、しばらく一次ノードより先にラベルを出す(SPEC 6.8)
   const now = performance.now()
@@ -1656,8 +1742,7 @@ function updateLabelVisibility(ctx) {
     camera: ctx.camera,
     width: el.clientWidth,
     height: el.clientHeight,
-    hoveredId,
-    neighbors,
+    focus,
     fadeOn,
     visibleLabels: ctx.visual.visibleLabels,
     keepBias: LABEL_KEEP_BIAS,
@@ -1676,6 +1761,55 @@ function updateLabelVisibility(ctx) {
     node.labelShowTarget = 1
     node.label.visible = true
   }
+}
+
+// ==========================================================================
+// 到着時の共通ワード強調 (SPEC 6.10)
+//
+// App が arrivalHighlightSet(relation.js)で求めた対象を travelTo に渡し、着いたら始める。
+// arrivalSharedMs 続けたら arrivalSharedFadeMs かけて通常に戻す。
+// 操作(回転・ズーム・ほかのノードへのホバー・キー・次の移動・追加表示)があれば、その時点で打ち切る
+// ==========================================================================
+function startArrival(ctx, set) {
+  const linkKeys = new Set()
+  for (const [a, b] of set.links) {
+    linkKeys.add(`${a}->${b}`)
+    linkKeys.add(`${b}->${a}`)
+  }
+  ctx.arrival = {
+    nodes: set.nodes,
+    linkKeys,
+    labelOrder: set.labelOrder,
+    until: performance.now() + set.holdMs,
+    fadeMs: set.fadeMs,
+    // 始めた時点で乗っていたノード(クリックした記事)へのホバーは、強調のあいだ無視する
+    ignoreHover: ctx.hoveredId,
+  }
+  ctx.transitionS = ctx.reducedMotion ? 0 : HOVER_TRANSITION_S
+}
+
+/** 時間が来たら、arrivalSharedFadeMs かけて通常の表示に戻す */
+function updateArrival(ctx, now) {
+  if (!ctx.arrival || now < ctx.arrival.until) return
+  const fadeS = ctx.arrival.fadeMs / 1000
+  ctx.arrival = null
+  ctx.transitionS = ctx.reducedMotion ? 0 : fadeS
+  applyHighlight(ctx)
+  // ラベルは既存の出入りのフェード(LABEL_SWAP_S)で通常の出方に戻る
+  updateLabelVisibility(ctx)
+}
+
+/**
+ * 操作があったので強調をすぐやめる。戻りはホバーと同じ速さ(操作の邪魔をしない)。
+ * refresh=false は呼ぶ側が続けて目標を決め直す場合(syncGraph)
+ */
+function cancelArrival(ctx, { refresh = true } = {}) {
+  if (!ctx.arrival) return
+  ctx.arrival = null
+  ctx.transitionS = ctx.reducedMotion ? 0 : HOVER_TRANSITION_S
+  if (!refresh) return
+  applyHighlight(ctx)
+  updateLabelVisibility(ctx)
 }
 
 // ==========================================================================

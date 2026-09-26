@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import * as THREE from 'three'
 
 import { stepForces } from '../src/utils/forceLayout.js'
-import { selectLabels } from '../src/utils/labelSelect.js'
+import { selectLabels, focusForArrival } from '../src/utils/labelSelect.js'
 import { seededRandom } from '../src/utils/prng.js'
 import { LABEL_KEEP_BIAS } from '../src/constants.js'
 
@@ -170,5 +170,40 @@ describe('ラベルの選び方(selectLabels)', () => {
     const items = [item('a', 0, true), item('b', 10, false)]
     assert.deepEqual(selectLabels(items, opts(LABEL_KEEP_BIAS)).map((r) => r.reason), ['shown', 'overlap'])
     assert.deepEqual(selectLabels(items, opts(1)).map((r) => r.reason), ['overlap', 'shown'])
+  })
+})
+
+describe('ラベルの注目状態: 到着時の共通ワード強調(focusForArrival。SPEC 6.10)', () => {
+  const camera = new THREE.PerspectiveCamera(60, 1, 1, 6000)
+  camera.position.set(0, 0, 300)
+  camera.lookAt(0, 0, 0)
+  camera.updateMatrixWorld()
+  const item = (id, x, fadeTarget, extra = {}) => ({
+    id, isCurrent: false, tier: 1, boosted: false, fadeTarget, wasSelected: false,
+    pos: { x, y: 0, z: 0 }, radiusPx: 6, labelPx: 16.8, labelAspect: 4, ...extra,
+  })
+  const opts = (focus) => ({
+    camera, width: 800, height: 800, focus, fadeOn: true, visibleLabels: 24, keepBias: 1,
+  })
+  const set = { nodes: new Set(['C', 'P', 's1', 's2']), labelOrder: ['C', 'P', 's1', 's2'] }
+
+  test('対象は深さフェードを受けず(奥でも出る)、対象の外は reason=arrival で出さない', () => {
+    const items = [
+      item('C', -120, 1, { isCurrent: true, tier: 0 }),
+      item('P', -60, 0, { tier: 2 }), // 奥で深さフェードの目標が 0
+      item('s1', 60, 0),
+      item('other', 120, 1),
+    ]
+    const reasons = selectLabels(items, opts(focusForArrival(set))).map((r) => r.reason)
+    assert.deepEqual(reasons, ['shown', 'shown', 'shown', 'arrival'])
+    // 強調していなければ、奥の2件は深さで消える
+    assert.deepEqual(selectLabels(items, opts(null)).map((r) => r.reason), ['shown', 'depth', 'depth', 'shown'])
+  })
+
+  test('対象どうしが重なったら、今の中心の並び順が上のもの(labelOrder の前)が場所を取る', () => {
+    // s2 の方がカメラに近いが、並び順は s1 が上
+    const items = [item('s2', 0, 1, { pos: { x: 0, y: 0, z: 20 } }), item('s1', 0, 1)]
+    const reasons = selectLabels(items, opts(focusForArrival(set))).map((r) => r.reason)
+    assert.deepEqual(reasons, ['overlap', 'shown'])
   })
 })

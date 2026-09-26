@@ -64,16 +64,23 @@ export function labelHeightPx(bold) {
  *   labelPx(ラベルの高さ px), labelAspect(幅 / 高さ)
  * opts:
  *   camera(行列が最新のもの), width, height(描画領域の px),
- *   hoveredId(無ければ null), neighbors(ホバー中ノードの隣接 Set),
+ *   focus(注目状態。無ければ null。下の focusForHover / focusForArrival で作る),
+ *   hoveredId・neighbors(focus を渡さないときのホバーの書き方。focusForHover と同じ意味),
  *   fadeOn(labelDepthFade), visibleLabels, keepBias(前回表示の優遇。表示は LABEL_KEEP_BIAS)
+ *
+ * 注目状態(ホバー・到着時の共通ワード強調。SPEC 6.10)のあいだは、注目の集合に入るラベルだけを出す。
+ *   ids      … ラベルを出してよいノード。ほかは reason = focus.reason で出さない
+ *   priority … 場所を取る順(小さいほど先)。同じ値ならカメラに近い順
+ *   exempt   … 深さフェードを受けない(どの角度でも読める)ノード。faint にもならない
  *
  * @returns {{reason:string, selected:boolean, faint:boolean, center:{x:number,y:number}|null}[]}
  *   items と同じ並び。reason は window.__viz.labels() と同じ
- *   (shown / faint / overlap / offscreen / rank / depth / hover)。
+ *   (shown / faint / overlap / offscreen / rank / depth / hover / arrival)。
  *   center はラベルの Sprite.center に入れる値(投影まで進んだものだけ。重なりで捨てたものにも入る)
  */
 export function selectLabels(items, opts) {
-  const { camera, width, height, hoveredId, neighbors, fadeOn, visibleLabels, keepBias } = opts
+  const { camera, width, height, fadeOn, visibleLabels, keepBias } = opts
+  const focus = opts.focus || (opts.hoveredId ? focusForHover(opts.hoveredId, opts.neighbors) : null)
   const results = items.map(() => ({ reason: 'rank', selected: false, faint: false, center: null }))
 
   // --- 1. 候補を集めて優先度をつける ---
@@ -87,7 +94,7 @@ export function selectLabels(items, opts) {
     // 出すときと引っ込めるときで基準を変え、閾値付近でチラつかないようにする
     // (目標値は毎フレーム更新なので、ホバーが変わった直後のこの呼び出しでは古い。
     // そのため現在地・ホバー中はここでも明示的に除外しない)
-    if (fadeOn && !item.isCurrent && item.id !== hoveredId) {
+    if (fadeOn && !item.isCurrent && !(focus && focus.exempt.has(item.id))) {
       if (!keepsLabelCandidate(item.fadeTarget, item.wasSelected, LABEL_FADE_SHOW, LABEL_FADE_KEEP)) {
         res.reason = 'depth'
         continue
@@ -95,14 +102,13 @@ export function selectLabels(items, opts) {
     }
 
     let priority
-    if (hoveredId) {
-      // ホバー中は隣接以外のラベルは出さない(6.1と揃える)
-      if (item.id === hoveredId) priority = 0
-      else if (neighbors && neighbors.has(item.id)) priority = 1
-      else {
-        res.reason = 'hover'
+    if (focus) {
+      // 注目状態のあいだは、注目の集合の外のラベルは出さない(ホバーは 6.1、到着時の強調は 6.10)
+      if (!focus.ids.has(item.id)) {
+        res.reason = focus.reason
         continue
       }
+      priority = focus.priority(item.id)
     } else {
       priority = item.tier
       // 現在地(0)の次、ほかの一次ノード(1)より前
@@ -141,7 +147,7 @@ export function selectLabels(items, opts) {
     const faint =
       fadeOn &&
       !item.isCurrent &&
-      item.id !== hoveredId &&
+      !(focus && focus.exempt.has(item.id)) &&
       item.fadeTarget <= LABEL_OVERLAP_FAINT
     if (faint ? faintShown >= LABEL_FAINT_MAX : shown >= visibleLabels) {
       if (!faint && faintShown >= LABEL_FAINT_MAX) break
@@ -196,4 +202,34 @@ export function selectLabels(items, opts) {
     shown += 1
   }
   return results
+}
+
+/**
+ * ホバーの注目状態(SPEC 6.1)。ホバー中のノードと隣接だけにラベルを出し、ホバー中のノードが先に場所を取る。
+ * 深さフェードを受けないのはホバー中のノードだけ(隣接は受ける)
+ */
+export function focusForHover(hoveredId, neighbors) {
+  const ids = new Set(neighbors || [])
+  ids.add(hoveredId)
+  return {
+    reason: 'hover',
+    ids,
+    priority: (id) => (id === hoveredId ? 0 : 1),
+    exempt: new Set([hoveredId]),
+  }
+}
+
+/**
+ * 到着時の共通ワード強調の注目状態(SPEC 6.10)。対象(前後の中心と共通ワードの上位)だけにラベルを出し、
+ * labelOrder の順(今の中心 → 前の中心 → 共通ワードの関連スコア順)に場所を取る。対象はすべて深さフェードを受けない
+ * @param {{nodes:Set<string>, labelOrder:string[]}} set arrivalHighlightSet の戻り値
+ */
+export function focusForArrival(set) {
+  const rank = new Map(set.labelOrder.map((id, i) => [id, i]))
+  return {
+    reason: 'arrival',
+    ids: set.nodes,
+    priority: (id) => rank.get(id) ?? set.labelOrder.length,
+    exempt: set.nodes,
+  }
 }

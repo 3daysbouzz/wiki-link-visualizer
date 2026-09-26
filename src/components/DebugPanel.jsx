@@ -150,6 +150,15 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
             '共通ワード1件あたりに縮める量'
           ),
           trailSharedCap: slider('trailSharedCap', 'trailSharedCap', '共通ワードを数える上限'),
+          trailTiered: toggle('trailTiered', '中心同士の距離を共通ワードの件数の段階で決める(rev4)'),
+          trailLenNone: slider('trailLenNone', 'trailLenNone', '共通ワード 0 件の中心同士の距離'),
+          trailLenFew: slider('trailLenFew', 'trailLenFew', '1〜3件'),
+          trailLenMid: slider('trailLenMid', 'trailLenMid', '4〜7件'),
+          trailLenMany: slider('trailLenMany', 'trailLenMany', '8件以上'),
+          arrivalShared: toggle('arrivalShared', '進んだ直後、前後の中心と共通ワードだけを残して減光する'),
+          arrivalSharedMs: slider('arrivalSharedMs', 'arrivalSharedMs', '強調を続ける時間(ms)'),
+          arrivalSharedFadeMs: slider('arrivalSharedFadeMs', 'arrivalSharedFadeMs', '通常に戻す時間(ms)'),
+          arrivalSharedMax: slider('arrivalSharedMax', 'arrivalSharedMax', 'ラベルを保証する共通ワードの上限'),
           sharedPackets: toggle(
             'sharedPackets',
             '前の中心 → 共通ワード → 今の中心 にパケットを流す'

@@ -392,6 +392,36 @@ export const SHARED_PACKETS = false
 // 前後の記事のつながりを示す点だと分かるようにする(2026-09-26 利用者の指示)
 export const SHARED_PACKET_PX = 3
 
+// --- 中心同士の距離の段階 (SPEC 6.9。タスク07。rev4) --------------------------
+// 共通ワードの件数を4段階に分け、段階ごとに中心同士の線の長さを決める(trailTiered が on のとき。
+// distanceByScore も on であること)。細かく比例させないのは、説明しなくても
+// 「共通ワードで距離が変わっている」と気づいてもらうため。2026-09-26 利用者と決定。
+// 境目は利用者が決めた割り振りなので動かさない(調整するのは下の長さの方)
+//   0 … none / 1〜3 … few / 4〜7 … mid / 8 以上 … many
+export const TRAIL_TIER_FEW_MAX = 3
+export const TRAIL_TIER_MID_MAX = 7
+// 段階で決めるか。off なら従来(05)の計算(基準から相互リンクと共通ワードの数で縮める)
+export const TRAIL_TIERED = false
+// 段階ごとの線の自然長(ワールド座標)。反発で実際の距離は狙いより長くなるので、
+// 実際の距離(measure() の中心同士の距離)で隣り合う段階に 1.3 倍以上の差が出るように決める。
+// 値と理由は測って決めたら書き直す
+export const TRAIL_LEN_NONE = 180
+export const TRAIL_LEN_FEW = 130
+export const TRAIL_LEN_MID = 95
+export const TRAIL_LEN_MANY = 60
+
+// --- 到着時の共通ワード強調 (SPEC 6.10。タスク07。rev4) -----------------------
+// 子をクリックして進んだ直後だけ、前後の中心と共通ワード以外をホバーと同じ比率まで減光し、
+// 共通ワードの名前を確実に読めるようにする。強調している間だけで、終われば通常の表示に戻す
+// (ずっと目立たせると、意図が伝わらないまま画面を占めるため。2026-09-26 利用者と合意)
+export const ARRIVAL_SHARED = false
+// 強調を続ける時間(ms)。値は見て決めたら理由を書き直す
+export const ARRIVAL_SHARED_MS = 2500
+// 通常の表示に戻す時間(ms)
+export const ARRIVAL_SHARED_FADE_MS = 500
+// ラベルを保証する共通ワードの上限(今の中心の並び順 = 関連スコアの順で上から)
+export const ARRIVAL_SHARED_MAX = 8
+
 // --- 画面上の見え方の測定 (SPEC 12.5。タスク06) ----------------------------
 // ?debug=1 の window.__viz.measure() が使う「測る条件」。表示の調整値ではないので VizConfig には入れない
 // (LEAD_EXTRA_MAX と同じ扱い)。値を変えると過去の基準値(docs/tasks/06-report-baseline.md)と比べられなくなる。
