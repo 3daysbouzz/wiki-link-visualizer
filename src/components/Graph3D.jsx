@@ -225,18 +225,20 @@ function displayPosition(ctx, node, out) {
 }
 
 const Graph3D = forwardRef(function Graph3D(
-  { graphData, onNodeClick, onNodeHover, currentId, loadingId, packetRoutes, seed = 1, config },
+  { graphData, onNodeClick, onNodeHover, onArrivalChange, currentId, loadingId, packetRoutes, seed = 1, config },
   ref
 ) {
   const containerRef = useRef(null)
   const ctxRef = useRef(null)
   const clickHandlerRef = useRef(onNodeClick)
   const hoverHandlerRef = useRef(onNodeHover)
+  const arrivalHandlerRef = useRef(onArrivalChange)
 
   // 最新のハンドラを常に参照できるようにしておく
   // (イベントリスナから呼ぶため、クロージャに古い関数を閉じ込めない)
   clickHandlerRef.current = onNodeClick
   hoverHandlerRef.current = onNodeHover
+  arrivalHandlerRef.current = onArrivalChange
 
   // ======================================================================
   // 1. マウント時: シーン・カメラ・レンダラーの構築
@@ -477,13 +479,15 @@ const Graph3D = forwardRef(function Graph3D(
       labelBoost: new Map(),
       pointer: new THREE.Vector2(),
       // 到着時の共通ワード強調(SPEC 6.10)。
-      // arrival: 強調中の対象 { nodes, linkKeys, labelOrder, until, fadeMs, ignoreHover } / null
+      // arrival: 強調中の対象 { nodes, labelIds, linkKeys, labelOrder, shared, until, fadeMs, ignoreHover } / null
       arrival: null,
       // 見た目の補間にかける時間(秒)。ふだんはホバーと同じ。強調が時間で終わるときだけ
       // arrivalSharedFadeMs にして、ゆっくり戻す。0 なら補間せず即時(prefers-reduced-motion)
       transitionS: HOVER_TRANSITION_S,
       // 動きを減らす設定(OS の「視差効果を減らす」など)。強調の減光と戻りを即時にする
       reducedMotion: false,
+      // 到着時の強調の開始・終了を App に知らせる(ステータス行に共通ワードの件数を出すため)
+      arrivalHandlerRef,
     }
     ctxRef.current = ctx
 
@@ -869,6 +873,7 @@ const Graph3D = forwardRef(function Graph3D(
       return {
         nodes: Array.from(ctx.arrival.nodes),
         labelOrder: ctx.arrival.labelOrder,
+        shared: ctx.arrival.shared.length,
         remainingMs: Math.max(0, Math.round(ctx.arrival.until - performance.now())),
       }
     },
@@ -1416,7 +1421,7 @@ function updateDepthFadeTargets(ctx) {
   const hoveredId = activeHoverId(ctx)
   const arrival = !hoveredId && ctx.arrival ? ctx.arrival : null
   for (const node of ctx.nodes.values()) {
-    if (node.isCurrent || node.id === hoveredId || (arrival && arrival.nodes.has(node.id))) {
+    if (node.isCurrent || node.id === hoveredId || (arrival && arrival.labelIds.has(node.id))) {
       node.labelFadeTarget = 1
     } else {
       node.labelFadeTarget = depthFadeOf(depthOf(node) - baseDepth, fadeStart, fadeEnd)
@@ -1789,12 +1794,22 @@ function startArrival(ctx, set) {
     nodes: set.nodes,
     linkKeys,
     labelOrder: set.labelOrder,
+    // 深さフェードを受けないのは、名前を保証する対象(前後の中心と上位の共通ワード)だけ
+    labelIds: new Set(set.labelOrder),
+    shared: set.shared,
     until: performance.now() + set.holdMs,
     fadeMs: set.fadeMs,
     // 始めた時点で乗っていたノード(クリックした記事)へのホバーは、強調のあいだ無視する
     ignoreHover: ctx.hoveredId,
   }
   ctx.transitionS = ctx.reducedMotion ? 0 : HOVER_TRANSITION_S
+  notifyArrival(ctx, set)
+}
+
+/** 強調の開始(set)・終了(null)を App に知らせる */
+function notifyArrival(ctx, set) {
+  const handler = ctx.arrivalHandlerRef && ctx.arrivalHandlerRef.current
+  if (handler) handler(set ? { shared: set.shared.length, labeled: set.labeled.length } : null)
 }
 
 /** 時間が来たら、arrivalSharedFadeMs かけて通常の表示に戻す */
@@ -1803,6 +1818,7 @@ function updateArrival(ctx, now) {
   const fadeS = ctx.arrival.fadeMs / 1000
   ctx.arrival = null
   ctx.transitionS = ctx.reducedMotion ? 0 : fadeS
+  notifyArrival(ctx, null)
   applyHighlight(ctx)
   // ラベルは既存の出入りのフェード(LABEL_SWAP_S)で通常の出方に戻る
   updateLabelVisibility(ctx)
@@ -1816,6 +1832,7 @@ function cancelArrival(ctx, { refresh = true } = {}) {
   if (!ctx.arrival) return
   ctx.arrival = null
   ctx.transitionS = ctx.reducedMotion ? 0 : HOVER_TRANSITION_S
+  notifyArrival(ctx, null)
   if (!refresh) return
   applyHighlight(ctx)
   updateLabelVisibility(ctx)

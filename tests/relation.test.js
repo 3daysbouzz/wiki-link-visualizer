@@ -390,20 +390,30 @@ describe('到着時の共通ワード強調の対象(arrivalHighlightSet。タ�
     ['B', links(['w', 'A', 'q', 'y', 'x', 'z'])],
   ])
 
-  test('前の中心・今の中心・共通ワードの上位 max 件と、その間の線が入る。並びは今の中心の順', () => {
+  test('共通ワードは全部明るく残し、名前を保証するのは上位 max 件。並びは今の中心の順', () => {
     const set = arrivalHighlightSet(['A', 'B'], exp, 3)
     assert.equal(set.prev, 'A')
     assert.equal(set.current, 'B')
-    // B の順(w, y, x, z)のうち上位3件。中心自身(A)は数えない
-    assert.deepEqual(set.shared, ['w', 'y', 'x'])
-    assert.deepEqual([...set.nodes].sort(), ['A', 'B', 'w', 'x', 'y'])
+    // B の順(w, y, x, z)。中心自身(A)は数えない
+    assert.deepEqual(set.shared, ['w', 'y', 'x', 'z'])
+    assert.deepEqual(set.labeled, ['w', 'y', 'x'])
+    assert.deepEqual([...set.nodes].sort(), ['A', 'B', 'w', 'x', 'y', 'z'])
+    // ラベルを出すのは前後の中心と上位 max 件だけ
     assert.deepEqual(set.labelOrder, ['B', 'A', 'w', 'y', 'x'])
     assert.deepEqual(set.links, [
       ['A', 'B'],
       ['A', 'w'], ['w', 'B'],
       ['A', 'y'], ['y', 'B'],
       ['A', 'x'], ['x', 'B'],
+      ['A', 'z'], ['z', 'B'],
     ])
+  })
+
+  test('max が 0 なら共通ワードの名前は保証しない(点と線は明るく残す)', () => {
+    const set = arrivalHighlightSet(['A', 'B'], exp, 0)
+    assert.deepEqual(set.labeled, [])
+    assert.deepEqual(set.labelOrder, ['B', 'A'])
+    assert.equal(set.nodes.size, 6)
   })
 
   test('共通ワードが 0 件・軌跡が2件未満・trailEnabled=false のときは null', () => {
@@ -411,7 +421,6 @@ describe('到着時の共通ワード強調の対象(arrivalHighlightSet。タ�
     assert.equal(arrivalHighlightSet(['A', 'B'], none, 8), null)
     assert.equal(arrivalHighlightSet(['B'], exp, 8), null)
     assert.equal(arrivalHighlightSet(['A', 'B'], exp, 8, { trailEnabled: false }), null)
-    assert.equal(arrivalHighlightSet(['A', 'B'], exp, 0), null)
   })
 
   test('3件以上の軌跡では末尾の2件を使う', () => {

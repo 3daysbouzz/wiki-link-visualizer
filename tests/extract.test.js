@@ -185,7 +185,8 @@ describe('ラベルの注目状態: 到着時の共通ワード強調(focusForAr
   const opts = (focus) => ({
     camera, width: 800, height: 800, focus, fadeOn: true, visibleLabels: 24, keepBias: 1,
   })
-  const set = { nodes: new Set(['C', 'P', 's1', 's2']), labelOrder: ['C', 'P', 's1', 's2'] }
+  // s3 は共通ワードだが名前を保証しない(labelOrder に無い)
+  const set = { nodes: new Set(['C', 'P', 's1', 's2', 's3']), labelOrder: ['C', 'P', 's1', 's2'] }
 
   test('対象は深さフェードを受けず(奥でも出る)、対象の外は reason=arrival で出さない', () => {
     const items = [
@@ -193,11 +194,13 @@ describe('ラベルの注目状態: 到着時の共通ワード強調(focusForAr
       item('P', -60, 0, { tier: 2 }), // 奥で深さフェードの目標が 0
       item('s1', 60, 0),
       item('other', 120, 1),
+      item('s3', 0, 1, { pos: { x: 0, y: 100, z: 0 } }),
     ]
     const reasons = selectLabels(items, opts(focusForArrival(set))).map((r) => r.reason)
-    assert.deepEqual(reasons, ['shown', 'shown', 'shown', 'arrival'])
+    // 名前を保証しない共通ワード(s3)も、ほかと同じくラベルは出さない
+    assert.deepEqual(reasons, ['shown', 'shown', 'shown', 'arrival', 'arrival'])
     // 強調していなければ、奥の2件は深さで消える
-    assert.deepEqual(selectLabels(items, opts(null)).map((r) => r.reason), ['shown', 'depth', 'depth', 'shown'])
+    assert.deepEqual(selectLabels(items, opts(null)).map((r) => r.reason), ['shown', 'depth', 'depth', 'shown', 'shown'])
   })
 
   test('対象どうしが重なったら、今の中心の並び順が上のもの(labelOrder の前)が場所を取る', () => {

@@ -62,6 +62,15 @@ export default function App() {
   const [notice, setNotice] = useState(null)
   // 画面上の見え方の測定(window.__viz.measure。SPEC 12.5)の進み具合。測っている間だけステータス行に出す
   const [measureStatus, setMeasureStatus] = useState(null)
+  // 到着時の共通ワード強調(SPEC 6.10)の件数表示。名前を出さない共通ワードがあるときだけ、強調のあいだ出す
+  const [arrivalStatus, setArrivalStatus] = useState(null)
+  const handleArrivalChange = useCallback((info) => {
+    setArrivalStatus(
+      info && info.shared > info.labeled
+        ? `共通の関連ワード ${info.shared}件(名前は上位 ${info.labeled}件)`
+        : null
+    )
+  }, [])
   const noticeTimer = useRef(null)
   // 操作説明は初めてグラフを出したときだけ出す
   const hintShownRef = useRef(false)
@@ -678,11 +687,13 @@ export default function App() {
       ? `FETCHING${progress > 0 ? ` ${progress}` : ''}`
       : error && !showErrorInCenter
         ? `ERROR ${error}`
-        : notice
-          ? notice
-          : tooManyNodes
-            ? 'WARN ノードが増えすぎています。検索し直すと整理できます'
-            : null
+        : arrivalStatus
+          ? arrivalStatus
+          : notice
+            ? notice
+            : tooManyNodes
+              ? 'WARN ノードが増えすぎています。検索し直すと整理できます'
+              : null
 
   return (
     <div
@@ -706,6 +717,7 @@ export default function App() {
             graphData={graphData}
             onNodeClick={handleNodeClick}
             onNodeHover={handleNodeHover}
+            onArrivalChange={handleArrivalChange}
             currentId={currentId}
             loadingId={loadingId}
             packetRoutes={packetRoutes}

@@ -501,12 +501,12 @@ function evaluateView(camera, vp, vpKey, config, layout, scene) {
     const state = focus ? viewState(camera, vp, config, layout, scene, null, 1, focus) : { reasonOf }
     const notReadable = {}
     let readable = 0
-    for (const id of scene.arrival.shared) {
+    for (const id of scene.arrival.labeled) {
       const reason = state.reasonOf.get(id)
       if (reason === 'shown') readable += 1
       else notReadable[reason] = (notReadable[reason] || 0) + 1
     }
-    M9 = { readable, of: scene.arrival.shared.length, notReadable, highlighted: !!focus }
+    M9 = { readable, of: scene.arrival.labeled.length, shared: scene.arrival.shared.length, notReadable, highlighted: !!focus }
   }
 
   const flat = {
@@ -644,7 +644,7 @@ export function toMarkdown(result) {
       r.M7.capped ? `${r.M7.steps}(上限)` : String(r.M7.steps),
       String(r.M8.flickers),
       r.initial.M9
-        ? `${r.initial.M9.readable} / ${fmt(r.orbit.mean.m9Readable, 1)} / ${fmt(r.orbit.worst.m9Readable, 0)}(/${r.initial.M9.of})`
+        ? `${r.initial.M9.readable} / ${fmt(r.orbit.mean.m9Readable, 1)} / ${fmt(r.orbit.worst.m9Readable, 0)}(/${r.initial.M9.of}・共通${r.initial.M9.shared})`
         : '—',
     ])
   )

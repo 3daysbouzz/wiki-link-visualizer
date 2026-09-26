@@ -165,27 +165,32 @@ export function trailTierLength(tier, config) {
 /**
  * 到着時の共通ワード強調で明るく残すもの(SPEC 6.10。タスク07)。
  *
- *   ノード … 前の中心・今の中心・共通ワードの上位 max 件(今の中心の展開結果の順 = 関連スコアの順)
- *   線     … 前の中心 ↔ 共通ワード、共通ワード ↔ 今の中心、前の中心 ↔ 今の中心
- *   labelOrder … ラベルが場所を取る順。今の中心 → 前の中心 → 共通ワード(関連スコアの順)
+ *   shared  … 共通ワードすべて。並びは今の中心の展開結果の順(= 関連スコアの順)
+ *   labeled … 名前を保証する共通ワード。shared の上位 max 件。残りは件数だけ示す(App のステータス行)
+ *   ノード  … 前の中心・今の中心・共通ワードすべて(減光しない。点と線で「どこにあるか」は分かる)
+ *   線      … 前の中心 ↔ 共通ワード、共通ワード ↔ 今の中心、前の中心 ↔ 今の中心
+ *   labelOrder … ラベルを出す対象と、場所を取る順。今の中心 → 前の中心 → labeled
+ *
+ * 上位を関連スコアの順で選ぶのは、同じ経路ならいつ開いても同じ顔ぶれになるため(閲覧数は日によって変わり、
+ * 取れなかった記事は値が無い)。ラベルの置き場所・パケットの順も同じ関連スコアの順で揃っている。
+ * 全部の名前を保証しないのは、共通ワードが多い組では前後の中心の間に集まって、どう並べても重なるため
+ * (タスク07 の測定。保証する件数は measure() の M9 で決めた。constants.js の ARRIVAL_SHARED_MAX)
  *
  * 軌跡が2件未満・trailEnabled=false(前の中心が画面に出ない)・共通ワードが 0 件なら null(何もしない)
  *
  * @param {string[]} trail
  * @param {Map<string, {title:string}[]>} expansions
- * @param {number} max ラベルを保証する共通ワードの上限(arrivalSharedMax)
+ * @param {number} max 名前を保証する共通ワードの件数(arrivalSharedMax)
  * @param {{trailEnabled?:boolean}} [config]
- * @returns {{prev:string, current:string, shared:string[], nodes:Set<string>, links:[string,string][], labelOrder:string[]} | null}
+ * @returns {{prev:string, current:string, shared:string[], labeled:string[], nodes:Set<string>, links:[string,string][], labelOrder:string[]} | null}
  */
 export function arrivalHighlightSet(trail, expansions, max, config = {}) {
   if (config.trailEnabled === false || trail.length < 2) return null
   const prev = trail[trail.length - 2]
   const current = trail[trail.length - 1]
-  const shared = sharedTitles(expansions.get(prev), expansions.get(current), [prev, current]).slice(
-    0,
-    Math.max(0, max)
-  )
+  const shared = sharedTitles(expansions.get(prev), expansions.get(current), [prev, current])
   if (shared.length === 0) return null
+  const labeled = shared.slice(0, Math.max(0, max))
   const links = [[prev, current]]
   for (const title of shared) {
     links.push([prev, title])
@@ -195,9 +200,10 @@ export function arrivalHighlightSet(trail, expansions, max, config = {}) {
     prev,
     current,
     shared,
+    labeled,
     nodes: new Set([prev, current, ...shared]),
     links,
-    labelOrder: [current, prev, ...shared],
+    labelOrder: [current, prev, ...labeled],
   }
 }
 

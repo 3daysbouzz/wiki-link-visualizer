@@ -220,16 +220,18 @@ export function focusForHover(hoveredId, neighbors) {
 }
 
 /**
- * 到着時の共通ワード強調の注目状態(SPEC 6.10)。対象(前後の中心と共通ワードの上位)だけにラベルを出し、
- * labelOrder の順(今の中心 → 前の中心 → 共通ワードの関連スコア順)に場所を取る。対象はすべて深さフェードを受けない
- * @param {{nodes:Set<string>, labelOrder:string[]}} set arrivalHighlightSet の戻り値
+ * 到着時の共通ワード強調の注目状態(SPEC 6.10)。前後の中心と、名前を保証する共通ワード(labelOrder)だけに
+ * ラベルを出し、labelOrder の順(今の中心 → 前の中心 → 共通ワードの関連スコア順)に場所を取る。
+ * これらは深さフェードを受けない。保証しない共通ワードは点と線だけ明るく、名前は出さない(件数はステータス行)
+ * @param {{labelOrder:string[]}} set arrivalHighlightSet の戻り値
  */
 export function focusForArrival(set) {
+  const ids = new Set(set.labelOrder)
   const rank = new Map(set.labelOrder.map((id, i) => [id, i]))
   return {
     reason: 'arrival',
-    ids: set.nodes,
+    ids,
     priority: (id) => rank.get(id) ?? set.labelOrder.length,
-    exempt: set.nodes,
+    exempt: ids,
   }
 }
