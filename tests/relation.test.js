@@ -11,6 +11,7 @@ import {
   computeEdgeSpringLength,
   sharedTitles,
   packetRoutesFor,
+  isEmphasizedEdge,
   mutualPulseFactor,
 } from '../src/utils/relation.js'
 import { buildGraph } from '../src/utils/buildGraph.js'
@@ -30,6 +31,8 @@ import {
   MUTUAL_PULSE_AMPLITUDE,
   MUTUAL_PULSE_SPEED,
   SHARED_PACKETS,
+  SHARED_PACKET_PX,
+  PACKET_PX,
 } from '../src/constants.js'
 
 const ON = PRESETS.rev3
@@ -227,6 +230,18 @@ describe('packetRoutesFor', () => {
   })
 })
 
+describe('isEmphasizedEdge', () => {
+  test('強調するのは中心同士(trail)の相互リンクだけ。子への線は相互リンクでも対象外', () => {
+    assert.equal(isEmphasizedEdge({ type: 'trail', mutual: 1 }, ON), true)
+    assert.equal(isEmphasizedEdge({ type: 'trail', mutual: 0 }, ON), false)
+    assert.equal(isEmphasizedEdge({ type: 'child', mutual: 1 }, ON), false)
+  })
+
+  test('mutualEmphasis が off なら何も強調しない', () => {
+    assert.equal(isEmphasizedEdge({ type: 'trail', mutual: 1 }, OFF), false)
+  })
+})
+
 describe('mutualPulseFactor', () => {
   test('1 と 1-振幅 の間を往復し、0 までは落ちない', () => {
     const amp = 0.5
@@ -280,6 +295,7 @@ describe('プリセット: 関連の強さ', () => {
     assert.equal(c.mutualPulseAmplitude, MUTUAL_PULSE_AMPLITUDE)
     assert.equal(c.mutualPulseSpeed, MUTUAL_PULSE_SPEED)
     assert.equal(c.sharedPackets, SHARED_PACKETS)
+    assert.equal(c.sharedPacketPx, SHARED_PACKET_PX)
   })
 
   test('子の距離の範囲は springLength の 0.6〜1.4倍程度、中心同士の基準は子の最大の 1.3倍程度', () => {
@@ -299,10 +315,15 @@ describe('プリセット: 関連の強さ', () => {
       'mutualWidthMultiplier',
       'mutualPulseAmplitude',
       'mutualPulseSpeed',
+      'sharedPacketPx',
     ]) {
       assert.ok(RANGES[key], key)
     }
   })
+})
+
+test('共通ワードのパケットは通常のパケットより少し大きい', () => {
+  assert.ok(SHARED_PACKET_PX > PACKET_PX)
 })
 
 describe('URL クエリ: 関連の強さ', () => {

@@ -6,7 +6,7 @@
  *   - 線ごとのバネの自然長(computeEdgeSpringLength)
  *   - 前後の中心に共通する関連ワード(sharedTitles)
  *   - データパケットを流す経路(packetRoutesFor)
- *   - 相互リンクの線の脈動(mutualPulseFactor)
+ *   - 太さと脈動で強調する線(isEmphasizedEdge)と、その脈動(mutualPulseFactor)
  */
 
 const clamp01 = (x) => Math.min(Math.max(x, 0), 1)
@@ -115,6 +115,17 @@ export function packetRoutesFor(trail, expansions, config, count) {
   }
 
   return children.slice(0, count).map((l) => [current, l.title])
+}
+
+/**
+ * 太さと脈動で強調する線か。mutualEmphasis が on のときの、**中心同士(trail)の相互リンク**だけ。
+ *
+ * 子への線は相互リンクでも対象にしない。rev2 の重みでは表示される子の 97〜100% が相互リンクで
+ * (初音ミク 40/40・流体力学 39/40 など)、全部の線が脈打って「どれが特別か」が分からなかったため
+ * (2026-09-26 利用者と合意)
+ */
+export function isEmphasizedEdge(edge, config) {
+  return !!(config.mutualEmphasis && edge.mutual && edge.type === 'trail')
 }
 
 /**

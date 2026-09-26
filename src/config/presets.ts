@@ -42,6 +42,7 @@ import {
   MUTUAL_PULSE_AMPLITUDE,
   MUTUAL_PULSE_SPEED,
   SHARED_PACKETS,
+  SHARED_PACKET_PX,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -125,7 +126,7 @@ export interface VizConfig {
   trailSharedBonus: number
   /** 共通ワードを数える上限 */
   trailSharedCap: number
-  /** 相互リンクの線を太さと脈動で強調する */
+  /** 中心同士の相互リンクの線を太さと脈動で強調する(子への線は対象外) */
   mutualEmphasis: boolean
   /** 相互リンクの線の太さ(通常の線に対する倍率) */
   mutualWidthMultiplier: number
@@ -135,6 +136,8 @@ export interface VizConfig {
   mutualPulseSpeed: number
   /** 前後の中心に共通する関連ワードを通る経路にパケットを流す(SPEC 6.7) */
   sharedPackets: boolean
+  /** 共通ワードを通るパケットの半径(px) */
+  sharedPacketPx: number
 }
 
 /**
@@ -164,6 +167,7 @@ const RELATION_VALUES = {
   mutualWidthMultiplier: MUTUAL_WIDTH_MULTIPLIER,
   mutualPulseAmplitude: MUTUAL_PULSE_AMPLITUDE,
   mutualPulseSpeed: MUTUAL_PULSE_SPEED,
+  sharedPacketPx: SHARED_PACKET_PX,
 }
 
 /** 関連の強さの on/off。current・rev2・mesh はすべて off(従来の配置・見た目を保つ) */
@@ -315,6 +319,7 @@ export const DEFAULT_PRESET = 'rev2'
  *   mutualWidthMultiplier 1 で通常の線と同じ太さ。4 を超えると線が帯に見える
  *   mutualPulseAmplitude  0 で脈動なし、1 で谷で消える
  *   mutualPulseSpeed      0 で止まる。20(約0.3秒周期)を超えると点滅に見える
+ *   sharedPacketPx        1 未満は見えない。8 を超えるとノード(一次 6〜9px)と見分けにくい
  */
 export const RANGES: Record<string, { min: number; max: number; step?: number }> = {
   nodeLimit: { min: 8, max: 1000 },
@@ -347,6 +352,7 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   mutualWidthMultiplier: { min: 1, max: 4, step: 0.05 },
   mutualPulseAmplitude: { min: 0, max: 1, step: 0.05 },
   mutualPulseSpeed: { min: 0, max: 20, step: 0.1 },
+  sharedPacketPx: { min: 1, max: 8, step: 0.1 },
 }
 
 /** 力学に関わる項目。変えたらシミュレーションを再開する(配置は作り直さない) */
@@ -389,6 +395,7 @@ export const VISUAL_KEYS = [
   'mutualPulseAmplitude',
   'mutualPulseSpeed',
   'sharedPackets',
+  'sharedPacketPx',
 ] as const
 
 /** デバッグパネルの relation フォルダに並べる項目(上の LAYOUT_KEYS・VISUAL_KEYS の一部) */
@@ -405,6 +412,7 @@ export const RELATION_KEYS = [
   'mutualPulseAmplitude',
   'mutualPulseSpeed',
   'sharedPackets',
+  'sharedPacketPx',
 ] as const
 
 /** URL や leva から来た値を VizConfig の型に揃える。不正な値は base の値を使う */
@@ -557,5 +565,11 @@ export function coerceConfig(
       r.mutualPulseSpeed.max
     ),
     sharedPackets: bool(raw.sharedPackets, base.sharedPackets),
+    sharedPacketPx: float(
+      raw.sharedPacketPx,
+      base.sharedPacketPx,
+      r.sharedPacketPx.min,
+      r.sharedPacketPx.max
+    ),
   }
 }

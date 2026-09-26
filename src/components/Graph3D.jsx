@@ -79,7 +79,11 @@ import {
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
-import { computeEdgeSpringLength, mutualPulseFactor } from '../utils/relation.js'
+import {
+  computeEdgeSpringLength,
+  isEmphasizedEdge,
+  mutualPulseFactor,
+} from '../utils/relation.js'
 
 /**
  * Three.js本体のみで実装した3Dグラフ描画コンポーネント。
@@ -96,7 +100,7 @@ import { computeEdgeSpringLength, mutualPulseFactor } from '../utils/relation.js
  *   塗り/中空 = 未訪問は白塗り、訪問済み(軌跡上)は白い輪郭だけ
  *   線種     = 起点につながる線は実線、それ以外は破線
  *   不透明度 = 奥のもの(二次)ほど薄い
- *   脈動     = 相互リンクの線(rev3 の mutualEmphasis。SPEC 6.9)
+ *   脈動     = 中心同士の相互リンクの線(rev3 の mutualEmphasis。SPEC 6.9)
  *
  * ノードとラベルは Sprite(sizeAttenuation:false)で描く。
  * こうするとカメラ距離に関係なく画面上のピクセル数で大きさを決められるので、
@@ -1306,17 +1310,17 @@ function syncGraph(ctx, graphData, currentId) {
 // 線分用のバッファを張り直す
 //
 // 線は 実線/破線 × 通常/太線 の4つのメッシュに振り分ける。
-// 太線は相互リンクの強調(mutualEmphasis。SPEC 6.9)が on のときの相互リンクだけ。
+// 太線は相互リンクの強調(mutualEmphasis。SPEC 6.9)が on のときの、中心同士(trail)の相互リンクだけ。
+// 子への線は相互リンクでも対象にしない(表示される子はほぼ全部が相互リンクで、全部が脈打ってしまうため)。
 // off のときは太線を使わず、従来とまったく同じ描き方になる(current・rev2 の見た目を保つ)
 // ==========================================================================
 function rebuildEdgeBuffers(ctx) {
-  const emphasis = ctx.visual.mutualEmphasis
   let solid = 0
   let dashed = 0
   let wideSolid = 0
   let wideDashed = 0
   for (const link of ctx.links) {
-    link.wide = !!(emphasis && link.mutual)
+    link.wide = isEmphasizedEdge(link, ctx.visual)
     if (link.wide && link.primary) wideSolid++
     else if (link.wide) wideDashed++
     else if (link.primary) solid++
@@ -1724,6 +1728,8 @@ function updateGrid(ctx, t) {
 function updatePackets(ctx, t) {
   const ratio = ctx.discTexture.userData.circleRatio || 1
   const s = spriteScaleFromPx(ctx, (PACKET_PX * 2) / ratio)
+  // 共通ワードを通るパケットは少し大きくする(前後の記事のつながりを示す点。SPEC 6.9)
+  const sShared = spriteScaleFromPx(ctx, (ctx.visual.sharedPacketPx * 2) / ratio)
 
   for (let i = 0; i < ctx.packets.length; i++) {
     const sprite = ctx.packets[i]
@@ -1753,7 +1759,8 @@ function updatePackets(ctx, t) {
     displayPosition(ctx, from, _v1)
     displayPosition(ctx, to, _v2)
     sprite.position.lerpVectors(_v1, _v2, phase * segments - seg)
-    sprite.scale.set(s, s, 1)
+    const size = segments >= 2 ? sShared : s
+    sprite.scale.set(size, size, 1)
 
     // 不透明度 0→1→1→0(端で唐突に消えないように)。経路全体に対して掛ける
     let opacity

@@ -150,7 +150,7 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
             '共通ワード1件あたりに縮める量'
           ),
           trailSharedCap: slider('trailSharedCap', 'trailSharedCap', '共通ワードを数える上限'),
-          mutualEmphasis: toggle('mutualEmphasis', '相互リンクの線を太さと脈動で強調する'),
+          mutualEmphasis: toggle('mutualEmphasis', '中心同士の相互リンクの線を太さと脈動で強調する'),
           mutualWidthMultiplier: slider(
             'mutualWidthMultiplier',
             'mutualWidthMultiplier',
@@ -166,6 +166,7 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
             'sharedPackets',
             '前の中心 → 共通ワード → 今の中心 にパケットを流す'
           ),
+          sharedPacketPx: slider('sharedPacketPx', 'sharedPacketPx', '共通ワードを通るパケットの半径(px)'),
         },
         { collapsed: false }
       ),

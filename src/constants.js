@@ -365,7 +365,9 @@ export const TRAIL_MUTUAL_BONUS = 15
 export const TRAIL_SHARED_BONUS = 4
 export const TRAIL_SHARED_CAP = 10
 
-// 相互リンクの線を太さと脈動で強調するか。off なら従来の描画(LineSegments)のまま
+// 中心同士の相互リンクの線(trail edge)を太さと脈動で強調するか。off なら従来の描画(LineSegments)のまま。
+// 子への線は対象にしない。rev2 の重みでは表示される子の 97〜100% が相互リンクで、
+// 全部の線が脈打って「どれが特別か」が分からなくなったため(2026-09-26 利用者と合意)
 export const MUTUAL_EMPHASIS = false
 // 相互リンクの線の太さ(通常の線 1px に対する倍率)。
 // 強調の主役は脈動なので控えめにする(利用者との合意は 1.3〜1.5。2026-09-25)。
@@ -382,3 +384,6 @@ export const MUTUAL_PULSE_SPEED = 4
 // 1つ前の中心と今の中心に共通する関連ワードがあるとき、パケットを
 // 前の中心 → 共通ワード → 今の中心 に流すか(SPEC 6.7)。off なら従来どおり 今の中心 → 子
 export const SHARED_PACKETS = false
+// 共通ワードを通るパケットの半径(px)。通常のパケット(PACKET_PX = 2.2)より少し大きくして、
+// 前後の記事のつながりを示す点だと分かるようにする(2026-09-26 利用者の指示)
+export const SHARED_PACKET_PX = 3
