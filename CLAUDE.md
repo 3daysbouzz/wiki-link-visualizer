@@ -13,6 +13,8 @@ Wikipedia記事間のリンクを3Dグラフで可視化するWebアプリ。個
 - クリック前にその記事が何かを判断できることが体験の質を決める
 - 3Dの価値は「空間を移動している感覚」にある。3D特有の読みにくさ
   (線の交差、奥行きの誤認)はUI側で補償する前提で設計する
+- 面白さの本質は wiki 自体にあり、このツールはそれを 3D の形で届ける。判断しやすい・操作しやすい・
+  視認性が高い・ちゃんと動く、はすべて「面白さを詰める」ことと同じ(2026-09-26 利用者と合意)
 
 ## 絶対に守ること
 
@@ -57,6 +59,10 @@ src/
 ├── App.jsx                   状態管理。軌跡(trail)からグラフを組み立てる
 ├── App.css                   デザイントークン(:root の CSS 変数)とレイアウト
 ├── constants.js              チューニング可能な定数はすべてここ(px・秒・不透明度も)
+├── utils/                    純粋関数(下の段落)。表示と測定が同じ関数を呼ぶ
+├── debug/
+│   ├── measure.js            画面上の見え方の測定(window.__viz.measure。SPEC 12.5)。呼ばれたときだけ読み込む
+│   └── benchRoutes.js        測る経路の一覧(行を足すだけで測れる)
 ├── api/
 │   ├── wikipedia.js          リンク取得・関連スコア(morelike+相互リンク+冒頭リンク)・閲覧数(REST)・抽選・メタ情報・検索候補
 │   └── summary.js            記事プレビュー(REST summary API)
@@ -68,13 +74,17 @@ src/
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
     └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける
-tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ)
+tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・画面上の見え方の測定)
 ```
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
 `src/utils/depthFade.js`(ラベルの深さフェードの計算)は SPEC 6.3。
 `src/utils/buildGraph.js`(trail からグラフを組み立てる)は SPEC 7章、
 `src/utils/relation.js`(関連の強さを配置と動きで見せる計算。rev3)は SPEC 6.9。
+`src/utils/forceLayout.js`(力学の1ステップ・初期位置・全体を収める距離)・`labelSelect.js`(ラベルの間引きの判断)・
+`screenProjection.js`(画面への投影・測定用の視点)・`nodeStyle.js`(階層と球の大きさ)は Graph3D.jsx から切り出したもので、
+**表示(Graph3D)と画面上の見え方の測定(SPEC 12.5)が同じ関数を呼ぶ。** 測定側に計算を写さないこと
+(表示を調整しても測定に反映されず、数字だけがずれていく)。`screenMetrics.js` は測定の小さな計算。
 
 `index.html` で Google Fonts(Space Grotesk / JetBrains Mono)を `<link>` で読む。
 これは npm 依存ではないので上の「依存を増やさない」には抵触しない。
@@ -164,6 +174,10 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 `[pageviews]` に「失敗N件」が出続けるなら `VIEWS_CONCURRENCY` を下げる(叩きすぎで拒否されている)。
 「冒頭リンク0件(取得失敗)」が続くなら parse の失敗なので、順位は冒頭の加点なしで出ている。
 重みの調整は `?debug=1` の `console.table`(プール上位20件の m・mutual・lead・score)を見て行う。
+
+見せ方を変える改善の前後は `?debug=1` の `await window.__viz.measure()` で、rev2 と rev3 を同じ条件の
+画面上の数字(M1〜M8)で比べる。基準値は `docs/tasks/06-report-baseline.md`、項目と決まりは SPEC 12.5。
+`[measure] …閲覧数を取れなかった記事が…` の警告が出た回は、数字が再現しないことがあるので測り直す。
 
 ## 説明のしかた
 

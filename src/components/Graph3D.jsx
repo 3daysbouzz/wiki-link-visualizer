@@ -6,21 +6,21 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { seededRandom } from '../utils/prng.js'
+import { depthFadeOf, approach, smoothstep } from '../utils/depthFade.js'
+import { stepForces, spawnScatter, fitCamera } from '../utils/forceLayout.js'
+import { projectToScreen, viewDepth } from '../utils/screenProjection.js'
 import {
-  depthFadeOf,
-  keepsLabelCandidate,
-  approach,
-  smoothstep,
-} from '../utils/depthFade.js'
+  selectLabels,
+  labelDisplayText,
+  labelFont,
+  labelTextureSize,
+  labelHeightPx,
+  LABEL_TEXTURE_SCALE,
+} from '../utils/labelSelect.js'
+import { nodeTierStyle } from '../utils/nodeStyle.js'
 import {
-  LABEL_CANDIDATES,
-  VIEWS_SCALE_MIN,
-  VIEWS_SCALE_MAX,
   NODE_PX_CURRENT,
   NODE_PX_CURRENT_MAX,
-  NODE_PX_PRIMARY_MIN,
-  NODE_PX_PRIMARY_MAX,
-  NODE_PX_VISITED,
   NODE_PX_SECONDARY,
   NODE_SECONDARY_OPACITY,
   BREATH_PERIOD_S,
@@ -37,8 +37,6 @@ import {
   HOVER_TRANSITION_S,
   LABEL_PX,
   LABEL_CURRENT_PX,
-  LABEL_GAP_PX,
-  LABEL_MAX_CHARS,
   LABEL_COLOR,
   LABEL_HOVER_COLOR,
   LABEL_UPDATE_INTERVAL_MS,
@@ -60,22 +58,21 @@ import {
   ZOOM_STEP,
   ZOOM_TWEEN_MS,
   MOBILE_MAX_PIXEL_RATIO,
-  MAX_SPEED,
-  ALPHA_MIN,
   SIM_STEPS_PER_SEC,
   SIM_MAX_STEPS_PER_FRAME,
-  SPAWN_SPREAD,
   MORE_SHAKE_MS,
   MORE_SHAKE_PX,
   MORE_SHAKE_CYCLES,
   MORE_SPAWN_JITTER,
-  LABEL_FADE_SHOW,
-  LABEL_FADE_KEEP,
   LABEL_KEEP_BIAS,
+  CAMERA_FOV,
+  CAMERA_NEAR,
+  CAMERA_FAR,
+  CAMERA_START_DISTANCE,
+  FIT_PADDING,
+  FIT_MIN_RADIUS,
   LABEL_SWAP_S,
   LABEL_SWAP_RISE_PX,
-  LABEL_OVERLAP_FAINT,
-  LABEL_FAINT_MAX,
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
@@ -130,30 +127,16 @@ function visualOf(config) {
   return out
 }
 
-// ラベルのテクスチャを描く倍率(12px の文字をそのまま描くとぼやけるので大きく描いて縮める)
-const LABEL_TEXTURE_SCALE = 3
-
 // 使い回す一時ベクトル(毎フレームのnewを避ける)
 const _v1 = new THREE.Vector3()
 const _v2 = new THREE.Vector3()
 const _v3 = new THREE.Vector3()
 const _forward = new THREE.Vector3()
+const _screen = {}
 const _color = new THREE.Color()
 const _resolution = new THREE.Vector2()
 const LABEL_BASE_COLOR = new THREE.Color(LABEL_COLOR)
 const LABEL_HOVER_COLOR_OBJ = new THREE.Color(LABEL_HOVER_COLOR)
-
-/**
- * 閲覧数を一次ノードの半径(px)に変換する。
- * 閲覧数は記事間で1万倍以上違うので、必ず対数で割り当てること。
- */
-function primaryPxFromViews(views) {
-  const v = Math.max(views || 0, 1)
-  const lo = Math.log10(VIEWS_SCALE_MIN)
-  const hi = Math.log10(VIEWS_SCALE_MAX)
-  const t = Math.min(Math.max((Math.log10(v) - lo) / (hi - lo), 0), 1)
-  return NODE_PX_PRIMARY_MIN + t * (NODE_PX_PRIMARY_MAX - NODE_PX_PRIMARY_MIN)
-}
 
 /**
  * CSS の cubic-bezier(x1,y1,x2,y2) と同じイージング関数を作る。
@@ -270,12 +253,12 @@ const Graph3D = forwardRef(function Graph3D(
     scene.background = new THREE.Color(BACKGROUND)
 
     const camera = new THREE.PerspectiveCamera(
-      60,
+      CAMERA_FOV,
       container.clientWidth / container.clientHeight || 1,
-      1,
-      6000
+      CAMERA_NEAR,
+      CAMERA_FAR
     )
-    camera.position.set(0, 0, 320)
+    camera.position.set(0, 0, CAMERA_START_DISTANCE)
 
     // WebGLが使えない環境だと、何も言わず真っ暗になってしまうので
     // 初期化失敗を必ず画面に出す(不具合の切り分けを楽にするため)
@@ -622,11 +605,9 @@ const Graph3D = forwardRef(function Graph3D(
         if (!node.sprite.visible) continue
         displayPosition(ctx, node, _v1)
         const depth = camera.position.distanceTo(_v1)
-        _v1.project(camera)
-        if (_v1.z < -1 || _v1.z > 1) continue
-        const sx = (_v1.x * 0.5 + 0.5) * rect.width
-        const sy = (-_v1.y * 0.5 + 0.5) * rect.height
-        const d = Math.hypot(sx - px, sy - py)
+        const s = projectToScreen(_v1, camera, rect.width, rect.height, _screen)
+        if (!s.inFront) continue
+        const d = Math.hypot(s.x - px, s.y - py)
         const hitRadius = Math.max(HIT_RADIUS_PX, node.basePx * node.vis.scale)
         if (d > hitRadius) continue
         // 現在地の球そのもの(描画半径の内側)を押したときは現在地を優先する。
@@ -931,11 +912,8 @@ const Graph3D = forwardRef(function Graph3D(
       const node = ctx && ctx.nodes.get(id)
       if (!node) return null
       const el = ctx.renderer.domElement
-      displayPosition(ctx, node, _v1).project(ctx.camera)
-      return {
-        x: Math.round((_v1.x * 0.5 + 0.5) * el.clientWidth),
-        y: Math.round((-_v1.y * 0.5 + 0.5) * el.clientHeight),
-      }
+      const s = projectToScreen(displayPosition(ctx, node, _v1), ctx.camera, el.clientWidth, el.clientHeight)
+      return { x: Math.round(s.x), y: Math.round(s.y) }
     },
 
     /**
@@ -947,8 +925,7 @@ const Graph3D = forwardRef(function Graph3D(
       if (!ctx) return []
       const current = ctx.currentId ? ctx.nodes.get(ctx.currentId) : null
       ctx.camera.getWorldDirection(_forward)
-      const depthOf = (n) =>
-        displayPosition(ctx, n, _v1).sub(ctx.camera.position).dot(_forward)
+      const depthOf = (n) => viewDepth(displayPosition(ctx, n, _v1), ctx.camera, _forward)
       const base = current ? depthOf(current) : 0
       return Array.from(ctx.nodes.values()).map((n) => ({
         id: n.id,
@@ -993,19 +970,15 @@ const Graph3D = forwardRef(function Graph3D(
     },
 
     /** グラフ全体が収まるようカメラを引く */
-    zoomToFit(duration = 700, padding = 1.4) {
+    zoomToFit(duration = 700, padding = FIT_PADDING) {
       const ctx = ctxRef.current
       if (!ctx || ctx.nodes.size === 0) return
       ctx.followId = null
 
-      const box = new THREE.Box3()
-      for (const n of ctx.nodes.values()) {
-        box.expandByPoint(new THREE.Vector3(n.x, n.y, n.z))
-      }
-      const center = box.getCenter(new THREE.Vector3())
-      const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 40)
-      const fov = (ctx.camera.fov * Math.PI) / 180
-      const distance = (radius / Math.sin(fov / 2)) * padding
+      // 距離の式は画面上の見え方の測定(SPEC 12.5)と共有する
+      const fit = fitCamera(ctx.nodes.values(), ctx.camera.fov, padding, FIT_MIN_RADIUS)
+      const center = new THREE.Vector3(fit.center.x, fit.center.y, fit.center.z)
+      const distance = fit.distance
 
       const dir = ctx.camera.position.clone().sub(ctx.controls.target)
       if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1)
@@ -1129,9 +1102,8 @@ function spawnPosition(ctx, node) {
     node.z = origin.z + (random() - 0.5) * MORE_SPAWN_JITTER
     return
   }
-  node.x = (random() - 0.5) * SPAWN_SPREAD
-  node.y = (random() - 0.5) * SPAWN_SPREAD
-  node.z = (random() - 0.5) * SPAWN_SPREAD
+  // 初期位置の決め方は画面上の見え方の測定(SPEC 12.5)と共有する
+  spawnScatter(random, node)
 }
 
 function syncGraph(ctx, graphData, currentId) {
@@ -1245,18 +1217,13 @@ function syncGraph(ctx, graphData, currentId) {
   for (const node of ctx.nodes.values()) {
     const isCurrent = node.isCurrent
     const isPrimary = !!(currentNeighbors && currentNeighbors.has(node.id))
-    node.tier = isCurrent ? 0 : isPrimary ? 1 : 2
-    node.visited = node.expanded && !isCurrent
+    // 大きさの決め方は画面上の見え方の測定(SPEC 12.5)と共有する
+    const style = nodeTierStyle({ isCurrent, isPrimary, expanded: node.expanded, views: node.views })
+    node.tier = style.tier
+    node.visited = style.visited
+    node.basePx = style.basePx
     // 前景 = 起点+一次、背景 = 二次。パララックスの揺れ方が変わる
     node.layer = node.tier <= 1 ? 'front' : 'back'
-
-    if (isCurrent) {
-      node.basePx = NODE_PX_CURRENT
-    } else if (isPrimary) {
-      node.basePx = node.visited ? NODE_PX_VISITED : primaryPxFromViews(node.views)
-    } else {
-      node.basePx = NODE_PX_SECONDARY
-    }
     node.baseOpacity = node.tier === 2 ? NODE_SECONDARY_OPACITY : 1
 
     // 訪問済みは中空、未訪問は塗り。現在地は塗り
@@ -1449,7 +1416,7 @@ function updateDepthFadeTargets(ctx) {
   }
   const camera = ctx.camera
   camera.getWorldDirection(_forward)
-  const depthOf = (node) => displayPosition(ctx, node, _v1).sub(camera.position).dot(_forward)
+  const depthOf = (node) => viewDepth(displayPosition(ctx, node, _v1), camera, _forward)
   const baseDepth = depthOf(current)
   for (const node of ctx.nodes.values()) {
     if (node.isCurrent || node.id === ctx.hoveredId) {
@@ -1788,7 +1755,6 @@ function updateLabelVisibility(ctx) {
   const hoveredId =
     ctx.hoveredId && ctx.adjacency.has(ctx.hoveredId) ? ctx.hoveredId : null
   const neighbors = hoveredId ? ctx.adjacency.get(hoveredId) : null
-  const camera = ctx.camera
 
   // 追加表示で足したノードは、しばらく一次ノードより先にラベルを出す(SPEC 6.8)
   const now = performance.now()
@@ -1796,145 +1762,58 @@ function updateLabelVisibility(ctx) {
     if (until <= now || !ctx.nodes.has(id)) ctx.labelBoost.delete(id)
   }
 
-  // --- 1. 候補を集めて優先度をつける ---
-  const candidates = []
+  // どれを出すかの判断は labelSelect.js(画面上の見え方の測定と共有する。SPEC 12.5)。
+  // ここでは入力を集めて、結果をスプライトに反映するだけにする
   const fadeOn = ctx.visual.labelDepthFade
+  const labeled = []
+  const items = []
   for (const node of ctx.nodes.values()) {
     if (!node.label) continue
     // 前回選ばれていたか(候補の基準を分けるのと、表示中のラベルを優遇するため)。
     // 出入りのフェード中は label.visible が true のまま薄れていくので、visible ではなく選ばれたかで見る
-    node._wasLabelVisible = node.labelShowTarget > 0
+    const wasSelected = node.labelShowTarget > 0
     node.labelShowTarget = 0
     // 出入りのフェードが無効なら従来どおり即座に隠す(有効なら updateVisuals が薄れさせてから隠す)
     if (!fadeOn) node.label.visible = false
-    // 表示しなかった理由(デバッグ用。window.__viz.labels() で見る)
-    node._labelReason = 'rank'
-
-    // 深さで見えなくなっているラベルは候補から外す(VISIBLE_LABELS の枠と場所を使わせない)。
-    // 追加表示の優先ラベル(labelBoost)も例外にしない。
-    // 出すときと引っ込めるときで基準を変え、閾値付近でチラつかないようにする
-    // (目標値は毎フレーム更新なので、ホバーが変わった直後のこの呼び出しでは古い。
-    // そのため現在地・ホバー中はここでも明示的に除外しない)
-    if (fadeOn && !node.isCurrent && node.id !== hoveredId) {
-      if (
-        !keepsLabelCandidate(node.labelFadeTarget, node._wasLabelVisible, LABEL_FADE_SHOW, LABEL_FADE_KEEP)
-      ) {
-        node._labelReason = 'depth'
-        continue
-      }
-    }
-
-    let priority
-    if (hoveredId) {
-      // ホバー中は隣接以外のラベルは出さない(6.1と揃える)
-      if (node.id === hoveredId) priority = 0
-      else if (neighbors && neighbors.has(node.id)) priority = 1
-      else {
-        node._labelReason = 'hover'
-        continue
-      }
-    } else {
-      priority = node.tier
-      // 現在地(0)の次、ほかの一次ノード(1)より前
-      if (node.tier === 1 && ctx.labelBoost.has(node.id)) priority = 0.5
-    }
-
-    displayPosition(ctx, node, _v1)
-    node._priority = priority
-    node._camDistSq = _v1.distanceToSquared(camera.position)
-    // 前回表示していたラベルは少し近いものとして扱う(回転中の入れ替わりを減らす)。
-    // 重なり判定も先に処理されるので、同じ場所を争ったときに表示中のものが勝つ
-    if (node._wasLabelVisible) node._camDistSq *= LABEL_KEEP_BIAS * LABEL_KEEP_BIAS
-    candidates.push(node)
+    labeled.push(node)
+    items.push({
+      id: node.id,
+      isCurrent: node.isCurrent,
+      tier: node.tier,
+      boosted: ctx.labelBoost.has(node.id),
+      fadeTarget: node.labelFadeTarget,
+      wasSelected,
+      pos: displayPosition(ctx, node, new THREE.Vector3()),
+      radiusPx: node.basePx * node.vis.scale,
+      labelPx: node.label.userData.px,
+      labelAspect: node.label.userData.aspect,
+    })
   }
 
-  if (candidates.length === 0) return
-
-  // 優先度が高い順、同じ優先度ならカメラに近い順
-  candidates.sort(
-    (a, b) => a._priority - b._priority || a._camDistSq - b._camDistSq
-  )
-  const considered = candidates.slice(0, LABEL_CANDIDATES)
-
-  // --- 2. 画面に投影して、重なるものを捨てる ---
   const el = ctx.renderer.domElement
-  const width = el.clientWidth
-  const height = el.clientHeight
-  if (!width || !height) return
+  const results = selectLabels(items, {
+    camera: ctx.camera,
+    width: el.clientWidth,
+    height: el.clientHeight,
+    hoveredId,
+    neighbors,
+    fadeOn,
+    visibleLabels: ctx.visual.visibleLabels,
+    keepBias: LABEL_KEEP_BIAS,
+  })
 
-  const rects = []
-  let shown = 0
-  let faintShown = 0
-
-  for (const node of considered) {
-    // 深さフェードで十分に薄い奥のラベル(SPEC 6.3)。重なり判定をせず、場所も取らず、
-    // VISIBLE_LABELS とは別枠(LABEL_FAINT_MAX)で出す。現在地・ホバー中は対象外
-    const faint =
-      fadeOn &&
-      !node.isCurrent &&
-      node.id !== hoveredId &&
-      node.labelFadeTarget <= LABEL_OVERLAP_FAINT
-    if (faint ? faintShown >= LABEL_FAINT_MAX : shown >= ctx.visual.visibleLabels) {
-      if (!faint && faintShown >= LABEL_FAINT_MAX) break
-      continue
-    }
-
-    displayPosition(ctx, node, _v1)
-    _v1.project(camera) // 以降 _v1 はNDC座標
-
-    // カメラの後ろ / 画面外は捨てる
-    node._labelReason = 'offscreen'
-    if (_v1.z < -1 || _v1.z > 1) continue
-    const sx = (_v1.x * 0.5 + 0.5) * width
-    const sy = (-_v1.y * 0.5 + 0.5) * height
-    if (sx < 0 || sx > width || sy < 0 || sy > height) continue
-
-    const label = node.label
-    const labelH = label.userData.px
-    const labelW = labelH * (label.userData.aspect || 4)
-    const r = node.basePx * node.vis.scale + LABEL_GAP_PX
-
-    let rect
-    if (node.isCurrent) {
-      // 起点: 真下・中央揃え
-      label.center.set(0.5, 1 + r / labelH)
-      rect = { x1: sx - labelW / 2, x2: sx + labelW / 2, y1: sy + r, y2: sy + r + labelH }
-    } else if (sx + r + labelW <= width) {
-      // 右に置く
-      label.center.set(-r / labelW, 0.5)
-      rect = { x1: sx + r, x2: sx + r + labelW, y1: sy - labelH / 2, y2: sy + labelH / 2 }
-    } else {
-      // 右にはみ出すので左に置く
-      label.center.set(1 + r / labelW, 0.5)
-      rect = { x1: sx - r - labelW, x2: sx - r, y1: sy - labelH / 2, y2: sy + labelH / 2 }
-    }
-
-    if (faint) {
-      node._labelReason = 'faint'
-      node._anchorX = label.center.x
-      node._anchorY = label.center.y
-      node.labelShowTarget = 1
-      label.visible = true
-      faintShown += 1
-      continue
-    }
-
-    const overlaps = rects.some(
-      (o) => !(rect.x2 < o.x1 || rect.x1 > o.x2 || rect.y2 < o.y1 || rect.y1 > o.y2)
-    )
-    if (overlaps) {
-      node._labelReason = 'overlap'
-      continue
-    }
-
-    node._labelReason = 'shown'
-    node._anchorX = label.center.x
-    node._anchorY = label.center.y
-    rects.push(rect)
+  for (let i = 0; i < labeled.length; i++) {
+    const node = labeled[i]
+    const res = results[i]
+    // 表示しなかった理由(デバッグ用。window.__viz.labels() で見る)
+    node._labelReason = res.reason
+    if (res.center) node.label.center.set(res.center.x, res.center.y)
+    if (!res.selected) continue
+    node._anchorX = res.center.x
+    node._anchorY = res.center.y
     // 新たに選ばれたラベルは labelShow が 0 付近から上がる(フェードが有効なとき)ので浮かび上がる
     node.labelShowTarget = 1
-    label.visible = true
-    shown += 1
+    node.label.visible = true
   }
 }
 
@@ -1942,107 +1821,9 @@ function updateLabelVisibility(ctx) {
 // 力学シミュレーションの1ステップ
 // ==========================================================================
 function stepSimulation(ctx) {
-  if (ctx.alpha < ALPHA_MIN) return
-
-  const nodes = Array.from(ctx.nodes.values())
-  const n = nodes.length
-  if (n === 0) return
-
-  // 毎ステップ config を読みに行かず、最初に取り出しておく(内側のループが O(n^2) のため)
-  const {
-    repulsion,
-    repulsionRange,
-    springK,
-    centerK,
-    damping,
-    alphaDecay,
-  } = ctx.layout
-
-  // --- ノード間の反発(O(n^2)。数百ノード程度までを想定) ---
-  for (let i = 0; i < n; i++) {
-    const a = nodes[i]
-    for (let j = i + 1; j < n; j++) {
-      const b = nodes[j]
-      let dx = a.x - b.x
-      let dy = a.y - b.y
-      let dz = a.z - b.z
-      let distSq = dx * dx + dy * dy + dz * dz
-
-      if (distSq > repulsionRange * repulsionRange) continue
-      if (distSq < 1) {
-        // ほぼ同一座標だと力が発散するので微小にずらす
-        dx = ctx.jitter() - 0.5
-        dy = ctx.jitter() - 0.5
-        dz = ctx.jitter() - 0.5
-        distSq = 1
-      }
-
-      const dist = Math.sqrt(distSq)
-      const force = repulsion / distSq
-      const fx = (dx / dist) * force
-      const fy = (dy / dist) * force
-      const fz = (dz / dist) * force
-
-      a.vx += fx
-      a.vy += fy
-      a.vz += fz
-      b.vx -= fx
-      b.vy -= fy
-      b.vz -= fz
-    }
-  }
-
-  // --- リンクのバネ ---
-  for (const link of ctx.links) {
-    const a = ctx.nodes.get(link.source)
-    const b = ctx.nodes.get(link.target)
-    if (!a || !b) continue
-
-    const dx = b.x - a.x
-    const dy = b.y - a.y
-    const dz = b.z - a.z
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001
-    // 自然長は線ごと(関連スコア・中心同士の関係で変わる。SPEC 6.9)。
-    // distanceByScore が off なら、どの線も config.springLength が入っている
-    const force = (dist - link.springLength) * springK
-    const fx = (dx / dist) * force
-    const fy = (dy / dist) * force
-    const fz = (dz / dist) * force
-
-    a.vx += fx
-    a.vy += fy
-    a.vz += fz
-    b.vx -= fx
-    b.vy -= fy
-    b.vz -= fz
-  }
-
-  // --- 中心への引力 + 速度更新 ---
-  for (const node of nodes) {
-    node.vx -= node.x * centerK
-    node.vy -= node.y * centerK
-    node.vz -= node.z * centerK
-
-    node.vx *= damping
-    node.vy *= damping
-    node.vz *= damping
-
-    const speed = Math.sqrt(
-      node.vx * node.vx + node.vy * node.vy + node.vz * node.vz
-    )
-    if (speed > MAX_SPEED) {
-      const s = MAX_SPEED / speed
-      node.vx *= s
-      node.vy *= s
-      node.vz *= s
-    }
-
-    node.x += node.vx * ctx.alpha
-    node.y += node.vy * ctx.alpha
-    node.z += node.vz * ctx.alpha
-  }
-
-  ctx.alpha *= alphaDecay
+  // 計算は forceLayout.js(画面上の見え方の測定と共有する。SPEC 12.5)。
+  // ctx は nodes / links / layout / alpha / jitter を持つので、そのまま渡せる
+  stepForces(ctx)
 }
 
 // ==========================================================================
@@ -2071,22 +1852,16 @@ function updateFollow(ctx) {
 // 画面上の高さを LABEL_PX で固定する(sizeAttenuation:false)
 // ==========================================================================
 function makeLabel(ctx, text, bold) {
-  const display =
-    text.length > LABEL_MAX_CHARS ? text.slice(0, LABEL_MAX_CHARS) + '…' : text
-  const px = bold ? LABEL_CURRENT_PX : LABEL_PX
+  const display = labelDisplayText(text)
   const key = `${bold ? 'b' : 'r'}:${display}`
 
   let texture = ctx.labelTextures.get(key)
   if (!texture) {
     const canvas = document.createElement('canvas')
     const c = canvas.getContext('2d')
-    const fontPx = px * LABEL_TEXTURE_SCALE
-    const font = `${bold ? 700 : 500} ${fontPx}px "JetBrains Mono", ui-monospace, "Hiragino Sans", "Yu Gothic", monospace`
-
-    c.font = font
-    const padding = 4 * LABEL_TEXTURE_SCALE
-    const width = Math.ceil(c.measureText(display).width) + padding * 2
-    const height = Math.ceil(fontPx * 1.4)
+    const font = labelFont(bold)
+    // 大きさの測り方は画面上の見え方の測定(SPEC 12.5)と共有する(ラベルの幅が重なり判定に効くため)
+    const { width, height } = labelTextureSize(display, bold, c)
     canvas.width = width
     canvas.height = height
 
@@ -2113,7 +1888,7 @@ function makeLabel(ctx, text, bold) {
   })
   const sprite = new THREE.Sprite(material)
   // テクスチャの高さ(padding込み)が画面上で labelPx になるように
-  const labelPx = height2px(px)
+  const labelPx = labelHeightPx(bold)
   const s = spriteScaleFromPx(ctx, labelPx)
   sprite.scale.set(s * texture.userData.aspect, s, 1)
   sprite.userData.px = labelPx
@@ -2122,11 +1897,6 @@ function makeLabel(ctx, text, bold) {
   sprite.renderOrder = 2
   sprite.visible = false
   return sprite
-}
-
-// テクスチャは文字の 1.4 倍の高さで作っているので、文字が px になる高さに換算する
-function height2px(fontPx) {
-  return fontPx * 1.4
 }
 
 /** フォント読込後などに、既存ノードのラベルを描き直す */

@@ -884,6 +884,36 @@ export async function fetchLinkedArticles(title, options = {}) {
   return { title: center.title, links: picked.map((c) => toExpansionLink(c, weights)) }
 }
 
+/**
+ * 経路(開始記事と、そこから辿った記事)を順に展開する(SPEC 12.1。URL からの経路の復元)。
+ *
+ * App の URL 復元と、画面上の見え方の測定(src/debug/measure.js。SPEC 12.5)が同じ関数を呼ぶ。
+ * 取得は1記事ずつ順に行う(抽選の乱数は記事ごとに独立だが、叩きすぎないように並列にしない)。
+ * 取得結果は linkCache に残るので、同じ記事を2回目以降に展開するときは問い合わせない。
+ *
+ * @param {string} start 開始記事(利用者の入力なので、正規化させる)
+ * @param {string[]} path 辿った記事(API が返した名前なので正規化済みとみなす)
+ * @param {(assumeCanonical:boolean) => object} makeOptions
+ *   fetchLinkedArticles に渡す options を作る。呼ぶ時点の設定を使えるように関数で受け取る
+ * @param {(result:{title:string, links:object[]}, options:object, trail:string[]) => void} [onExpand]
+ *   1記事展開するたびに呼ぶ。trail はそこまでの経路(途中で失敗しても、そこまでの分を使えるように)
+ * @returns {Promise<string[]>} 経路(解決後の記事名。既に経路上にある記事は末尾へ並べ直す)
+ */
+export async function expandRoute(start, path, makeOptions, onExpand = () => {}) {
+  const firstOptions = makeOptions(false)
+  const first = await fetchLinkedArticles(start, firstOptions)
+  let trail = [first.title]
+  onExpand(first, firstOptions, trail)
+
+  for (const step of path) {
+    const stepOptions = makeOptions(true)
+    const r = await fetchLinkedArticles(step, stepOptions)
+    trail = [...trail.filter((id) => id !== r.title), r.title]
+    onExpand(r, stepOptions, trail)
+  }
+  return trail
+}
+
 // ---------------------------------------------------------------------------
 // 7b. 関連リンクの追加表示 (SPEC 5章・6.8)
 // ---------------------------------------------------------------------------

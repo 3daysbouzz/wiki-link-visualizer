@@ -259,6 +259,22 @@ export const FOLLOW_LERP = 0.06
 export const ZOOM_STEP = 1.3
 export const ZOOM_TWEEN_MS = 250
 
+// --- カメラ (SPEC 4章・6.5) ------------------------------------------------
+// 縦の画角(度)と描画範囲。画角は縦で決まるので、描画領域の幅を変えても縦の縮尺は変わらない
+export const CAMERA_FOV = 60
+export const CAMERA_NEAR = 1
+export const CAMERA_FAR = 6000
+// 起動時のカメラの位置(原点から +z 方向にこれだけ離れて原点を見る)
+export const CAMERA_START_DISTANCE = 320
+// 全体を収める(zoomToFit)ときの余白の倍率と、グラフが小さいときの半径の下限
+export const FIT_PADDING = 1.4
+export const FIT_MIN_RADIUS = 40
+// 最初の表示(検索・URL からの復元)で、全体を収めるまでの待ち時間と、そのあと起点の追従に移るまでの時間(ms)。
+// レイアウトがある程度広がってから収めないと、固まった初期配置に合わせて寄りすぎる。
+// 画面上の見え方の測定(SPEC 12.5)は、この待ち時間を 60 ステップ/秒で換算したステップ数の配置で距離を求める
+export const INITIAL_FIT_DELAY_MS = 900
+export const INITIAL_FOLLOW_DELAY_MS = 1700
+
 // --- 検索オートコンプリート・パンくず -------------------------------------
 // 入力が止まってから候補を取りに行くまでの待ち(ms)と候補数
 export const SUGGEST_DEBOUNCE_MS = 200
@@ -387,3 +403,32 @@ export const SHARED_PACKETS = false
 // 共通ワードを通るパケットの半径(px)。通常のパケット(PACKET_PX = 2.2)より少し大きくして、
 // 前後の記事のつながりを示す点だと分かるようにする(2026-09-26 利用者の指示)
 export const SHARED_PACKET_PX = 3
+
+// --- 画面上の見え方の測定 (SPEC 12.5。タスク06) ----------------------------
+// ?debug=1 の window.__viz.measure() が使う「測る条件」。表示の調整値ではないので VizConfig には入れない
+// (LEAD_EXTRA_MAX と同じ扱い)。値を変えると過去の基準値(docs/tasks/06-report-baseline.md)と比べられなくなる。
+
+// 周回視点の数。中心を囲む球面上に均等に並べる(フィボナッチ球面)。
+// 8 で上下・前後左右の偏りがおおむね均され、3経路 × 2画面 × 2プリセットでも数十秒で測り終わる
+export const MEASURE_VIEWS = 8
+// 落ち着くまで進める上限のステップ数。alphaDecay 0.99 なら約 420 ステップで ALPHA_MIN を下回るので、
+// その7倍あれば通常は届く。届かないときは結果に「上限に達した」と出す
+export const MEASURE_MAX_STEPS = 3000
+// 中心付近の混み具合を数える半径(px)。背景グリッドの一番内側の円(GRID_RING_RADII_PX[0])と同じ
+export const MEASURE_CROWD_RADIUS_PX = 60
+// 指で押す前提の、隣の球との間隔(px)。一般的なタッチ操作の目安(44pt)。
+// 指はマウスより大きく押す位置もずれるので、HIT_RADIUS_PX の2倍(32px)より広くとる
+export const MEASURE_TOUCH_PAIR_PX = 44
+// 回転中の点滅を測るとき、1ステップ(= 1/60 秒)で回す角度(度)。
+// 2° だと1周 180 ステップ(3秒)で、手でゆっくり回したときに近い
+export const MEASURE_ROTATE_STEP_DEG = 2
+// 仮想画面(描画領域の CSS px)。App.css と src/utils/layoutMode.js から求めた値(タスク06 の着手前の報告)。
+//   pc    … 1280×800・サイドバー開(wide)。幅 1280 − 340(--sidebar-width)、高さ 800 − 64(--topbar-height)
+//   phone … 844×390 の横画面(short-landscape)・ドロワー閉。
+//           ドロワーはグラフの上に重ねるので幅は減らない。高さ 390 − 44(低い横画面のトップバー)
+// 実機ではアドレスバーの分だけ 100dvh が低くなることがあるが、ここでは端末の公称値で測る。
+// App.css の値を変えたら合わせること(tests/screenMetrics.test.js で照合している)
+export const MEASURE_VIEWPORTS = {
+  pc: { width: 1280 - 340, height: 800 - 64, label: '1280×800・サイドバー開' },
+  phone: { width: 844, height: 390 - 44, label: '844×390 横画面・ドロワー閉' },
+}

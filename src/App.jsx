@@ -7,6 +7,7 @@ import ZoomControls from './components/ZoomControls.jsx'
 import DebugPanel from './components/DebugPanel.jsx'
 import {
   fetchLinkedArticles,
+  expandRoute,
   fetchPageviews,
   fetchArticleMeta,
   getMoreLinks,
@@ -34,6 +35,8 @@ import {
   MORE_LABEL_BOOST_MS,
   NOTICE_MS,
   MORE_HINT_MS,
+  INITIAL_FIT_DELAY_MS,
+  INITIAL_FOLLOW_DELAY_MS,
 } from './constants.js'
 
 // URL は起動時に一度だけ読む(経路の復元と設定の初期値に使う)
@@ -57,6 +60,8 @@ export default function App() {
   const [error, setError] = useState(null)
   // 左上のステータス行に数秒だけ出す案内(追加表示の操作説明・上限の通知)
   const [notice, setNotice] = useState(null)
+  // 画面上の見え方の測定(window.__viz.measure。SPEC 12.5)の進み具合。測っている間だけステータス行に出す
+  const [measureStatus, setMeasureStatus] = useState(null)
   const noticeTimer = useRef(null)
   // 操作説明は初めてグラフを出したときだけ出す
   const hintShownRef = useRef(false)
@@ -259,8 +264,8 @@ export default function App() {
       showMoreHint()
 
       // レイアウトがある程度落ち着いてから全体を収め、そのあと起点を追う
-      setTimeout(() => graphRef.current?.zoomToFit(700), 900)
-      setTimeout(() => graphRef.current?.followNode(result.title), 1700)
+      setTimeout(() => graphRef.current?.zoomToFit(700), INITIAL_FIT_DELAY_MS)
+      setTimeout(() => graphRef.current?.followNode(result.title), INITIAL_FOLLOW_DELAY_MS)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -460,6 +465,8 @@ export default function App() {
     // ?debug=1 のとき、配置の照合用に座標を取れるようにしておく
     // (Console で JSON.stringify(window.__viz.positions()) を2つのタブで見比べる)
     if (initialUrlState.debug) {
+      // measure() で読み込んだモジュール(measureMarkdown を同期で返すために持っておく)
+      let measureModule = null
       window.__viz = {
         positions: () => graphRef.current?.getPositions() || {},
         step: (n) => graphRef.current?.stepLayout(n),
@@ -481,6 +488,30 @@ export default function App() {
           configChangeRef.current(patch)
           return configRef.current
         },
+        // 画面上の見え方を測る(SPEC 12.5)。rev2 と rev3 を同じ展開結果・同じ仮想画面・同じ視点で比べる。
+        // 画面に出ているグラフ・経路・URL・カメラには触れず、別に組んだ配置で測る。
+        // 測る処理は通常表示では要らないので、呼ばれたときに初めて読み込む
+        // 例: await window.__viz.measure({ routes: ['work'], viewports: ['pc'] })
+        measure: async (options) => {
+          const mod = await import('./debug/measure.js')
+          measureModule = mod
+          try {
+            const result = await mod.runMeasure(options, { onProgress: setMeasureStatus })
+            window.__viz.lastMeasure = result
+            console.table(mod.summaryRows(result))
+            return result
+          } catch (e) {
+            console.error('[measure] %s', e.message)
+            throw e
+          } finally {
+            setMeasureStatus(null)
+          }
+        },
+        // 直前の measure() の結果
+        lastMeasure: null,
+        // 直前の結果を、レポートに貼れる Markdown の表にする
+        measureMarkdown: () =>
+          measureModule ? measureModule.toMarkdown(window.__viz.lastMeasure) : '',
       }
     }
     const { start, path } = initialUrlState
@@ -492,17 +523,11 @@ export default function App() {
       setError(null)
       let nextTrail = []
       try {
-        const firstOptions = linkOptions(false)
-        const first = await fetchLinkedArticles(start, firstOptions)
-        rememberExpansion(first.title, first.links, firstOptions.weights)
-        nextTrail = [first.title]
-
-        for (const step of path) {
-          const stepOptions = linkOptions(true)
-          const r = await fetchLinkedArticles(step, stepOptions)
-          rememberExpansion(r.title, r.links, stepOptions.weights)
-          nextTrail = [...nextTrail.filter((id) => id !== r.title), r.title]
-        }
+        // 展開の手順は画面上の見え方の測定(SPEC 12.5)と共有する
+        await expandRoute(start, path, linkOptions, (r, options, trailSoFar) => {
+          rememberExpansion(r.title, r.links, options.weights)
+          nextTrail = trailSoFar
+        })
       } catch (e) {
         setError(`経路の復元に失敗: ${e.message}`)
       } finally {
@@ -519,8 +544,8 @@ export default function App() {
       const last = nextTrail[nextTrail.length - 1]
       loadViewsThenPrefetch(Array.from(shown), last)
       showMoreHint()
-      setTimeout(() => graphRef.current?.zoomToFit(700), 900)
-      setTimeout(() => graphRef.current?.followNode(last), 1700)
+      setTimeout(() => graphRef.current?.zoomToFit(700), INITIAL_FIT_DELAY_MS)
+      setTimeout(() => graphRef.current?.followNode(last), INITIAL_FOLLOW_DELAY_MS)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -634,15 +659,17 @@ export default function App() {
   // グラフが空のときのエラーは左上の小さな行ではなく画面中央に出す
   // (URL の start が間違っていた場合など、真っ黒な画面で小さな文字だけでは気づけない)
   const showErrorInCenter = !!error && isEmpty
-  const status = loading
-    ? `FETCHING${progress > 0 ? ` ${progress}` : ''}`
-    : error && !showErrorInCenter
-      ? `ERROR ${error}`
-      : notice
-        ? notice
-        : tooManyNodes
-          ? 'WARN ノードが増えすぎています。検索し直すと整理できます'
-          : null
+  const status = measureStatus
+    ? measureStatus
+    : loading
+      ? `FETCHING${progress > 0 ? ` ${progress}` : ''}`
+      : error && !showErrorInCenter
+        ? `ERROR ${error}`
+        : notice
+          ? notice
+          : tooManyNodes
+            ? 'WARN ノードが増えすぎています。検索し直すと整理できます'
+            : null
 
   return (
     <div
