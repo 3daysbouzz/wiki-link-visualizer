@@ -168,7 +168,7 @@ await new Promise((ok) => { let n = 0; const t0 = performance.now(); const f = (
 
 | 環境 | rev2 | rev3 | 測った方法 |
 |---|---|---|---|
-| PC(Mac・Chrome。機種は未記入) | 60.1 | 60.2 | 上の手順(ドラッグで回しながら5秒間の平均) |
+| PC(MacBook Neo・Chrome) | 60.1 | 60.2 | 上の手順(ドラッグで回しながら5秒間の平均) |
 | スマホ横画面 | (未測定) | (未測定) | 実機確認のときに測る |
 
 ## 測り方の限界
