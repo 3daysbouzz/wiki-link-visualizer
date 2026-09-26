@@ -76,6 +76,7 @@ import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
 import {
   computeEdgeSpringLength,
+  computeEdgeSpringK,
 } from '../utils/relation.js'
 
 /**
@@ -817,7 +818,10 @@ const Graph3D = forwardRef(function Graph3D(
     if (!ctx) return
     ctx.layout = layoutOf(config)
     // 線ごとの自然長は距離の設定(SPEC 6.9)で変わるので、ここで計算し直す
-    for (const link of ctx.links) link.springLength = computeEdgeSpringLength(link, ctx.layout)
+    for (const link of ctx.links) {
+      link.springLength = computeEdgeSpringLength(link, ctx.layout)
+      link.springK = computeEdgeSpringK(link, ctx.layout)
+    }
     ctx.alpha = 1 // 位置はそのまま。止まっていた計算を動かし直す
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutSignature])
@@ -852,6 +856,7 @@ const Graph3D = forwardRef(function Graph3D(
           mutual: l.mutual,
           sharedCount: l.sharedCount,
           springLength: l.springLength,
+          springK: l.springK,
           dist: Math.round(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) * 10) / 10,
         }
       })
@@ -1207,7 +1212,11 @@ function syncGraph(ctx, graphData, currentId) {
     .filter((l) => ctx.nodes.has(l.source) && ctx.nodes.has(l.target))
   // 線ごとのバネの自然長。毎ステップ計算せず、ここと力学の設定の変更時にだけ決める
   // (stepSimulation の内側のループを重くしないため)
-  for (const link of ctx.links) link.springLength = computeEdgeSpringLength(link, ctx.layout)
+  for (const link of ctx.links) {
+    link.springLength = computeEdgeSpringLength(link, ctx.layout)
+    // 線ごとの硬さ(ふつうは null = springK。中心同士の距離の段階を使うときだけ。SPEC 6.9)
+    link.springK = computeEdgeSpringK(link, ctx.layout)
+  }
   if (ctx.links.length !== prevLinkCount) structureChanged = true
 
   // --- 隣接表を作る(ハイライトのたびにリンク配列を走査しないため) ---

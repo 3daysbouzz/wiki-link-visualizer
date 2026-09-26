@@ -7,6 +7,8 @@
  */
 import { ALPHA_MIN, MAX_SPEED, SPAWN_SPREAD } from '../constants.js'
 import { seededRandom } from './prng.js'
+import { computeEdgeSpringLength, computeEdgeSpringK } from './relation.js'
+import { LAYOUT_KEYS } from '../config/presets.ts'
 
 /**
  * ノードの初期位置を (seed, 記事名) から決める。
@@ -31,7 +33,7 @@ export function initialPosition(seed, id, out) {
  *
  * sim は { nodes: Map<id, node>, links, layout, alpha, jitter } を持つオブジェクト
  * (Graph3D の ctx をそのまま渡せる形)。node は x/y/z と vx/vy/vz を持ち、ここで書き換える。
- * link は { source, target, springLength }。
+ * link は { source, target, springLength, springK? }。springK が無ければ layout.springK を使う。
  *
  * alpha が ALPHA_MIN を下回っていたら何もしない。
  * @returns {boolean} 実際に進めたか(落ち着くまでのステップ数を数えるのに使う)
@@ -99,7 +101,7 @@ export function stepForces(sim) {
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001
     // 自然長は線ごと(関連スコア・中心同士の関係で変わる。SPEC 6.9)。
     // distanceByScore が off なら、どの線も config.springLength が入っている
-    const force = (dist - link.springLength) * springK
+    const force = (dist - link.springLength) * (link.springK ?? springK)
     const fx = (dx / dist) * force
     const fy = (dy / dist) * force
     const fz = (dz / dist) * force
@@ -174,4 +176,65 @@ export function fitCamera(points, fovDeg, padding, minRadius) {
   const radius = Math.max(Math.sqrt(sx * sx + sy * sy + sz * sz) / 2, minRadius)
   const fov = (fovDeg * Math.PI) / 180
   return { center, distance: (radius / Math.sin(fov / 2)) * padding }
+}
+
+/**
+ * グラフ(buildGraph の戻り値)から、力学の計算に渡す状態を作る。Graph3D の syncGraph と同じ手順:
+ *   - ノードは graphData.nodes の順に並べる(反発の計算順が配置に効く)
+ *   - 初期位置は (seed, 記事名) から決める
+ *   - 線ごとに自然長と硬さを決める(SPEC 6.9)
+ * previous(前の状態)を渡すと、散歩でクリックしたときと同じく、残るノードは位置と速度と並び順を引き継ぎ、
+ * 新しいノードだけを初期位置に置き、alpha を 1 に戻す(乱数列 jitter も引き継ぐ)
+ *
+ * 画面上の見え方の測定(src/debug/measure.js)と、配置の回帰テストが使う
+ */
+export function buildSim(graph, config, previous = null) {
+  const layout = {}
+  for (const k of LAYOUT_KEYS) layout[k] = config[k]
+
+  const nodes = new Map()
+  const incoming = new Set(graph.nodes.map((g) => g.id))
+  if (previous) {
+    for (const [id, node] of previous.nodes) if (incoming.has(id)) nodes.set(id, node)
+  }
+  for (const g of graph.nodes) {
+    if (nodes.has(g.id)) continue
+    const node = { id: g.id, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 }
+    initialPosition(config.seed, g.id, node)
+    nodes.set(g.id, node)
+  }
+  const links = graph.links
+    .map((l) => ({
+      source: typeof l.source === 'object' ? l.source.id : l.source,
+      target: typeof l.target === 'object' ? l.target.id : l.target,
+      type: l.type,
+      relScore: l.relScore || 0,
+      mutual: l.mutual ? 1 : 0,
+      sharedCount: l.sharedCount || 0,
+    }))
+    .filter((l) => nodes.has(l.source) && nodes.has(l.target))
+  for (const link of links) {
+    link.springLength = computeEdgeSpringLength(link, layout)
+    link.springK = computeEdgeSpringK(link, layout)
+  }
+  return {
+    nodes,
+    links,
+    layout,
+    alpha: 1,
+    jitter: previous ? previous.jitter : seededRandom(config.seed, 'jitter'),
+  }
+}
+
+/**
+ * alpha が ALPHA_MIN を下回るまで(最大 maxSteps)進める。onStep(steps, sim) を毎ステップ呼ぶ。
+ * @returns {{steps:number, capped:boolean}}
+ */
+export function settleSim(sim, maxSteps, onStep = null) {
+  let steps = 0
+  while (steps < maxSteps && stepForces(sim)) {
+    steps += 1
+    if (onStep) onStep(steps, sim)
+  }
+  return { steps, capped: sim.alpha >= ALPHA_MIN }
 }

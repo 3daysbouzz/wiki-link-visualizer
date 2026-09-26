@@ -123,6 +123,17 @@ export function packetRoutesFor(trail, expansions, config, count) {
 }
 
 /**
+ * 線のバネの硬さ。ふつうは null(config.springK を使う)。
+ * 中心同士の距離を段階で決めるとき(distanceByScore と trailTiered が on。rev4)だけ、
+ * 中心同士の線を trailSpringK にする。線1本では、両側の子すべてに掛かる原点への引き戻しに負けて、
+ * 狙いの長さを変えても実際の距離がほとんど動かないため(タスク07 の実測)
+ */
+export function computeEdgeSpringK(edge, config) {
+  if (config.distanceByScore && config.trailTiered && edge.type === 'trail') return config.trailSpringK
+  return null
+}
+
+/**
  * 中心同士の共通ワードの件数を、距離の段階に分ける(タスク07。2026-09-26 利用者と決定)。
  *   0 … none / 1〜TRAIL_TIER_FEW_MAX … few / 〜TRAIL_TIER_MID_MAX … mid / それより多い … many
  * 細かく比例させず大きな段階で分けるのは、説明しなくても「共通ワードで距離が変わっている」と

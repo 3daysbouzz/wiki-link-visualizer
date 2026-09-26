@@ -40,6 +40,7 @@ import {
   SHARED_PACKETS,
   SHARED_PACKET_PX,
   TRAIL_TIERED,
+  TRAIL_SPRING_K,
   TRAIL_LEN_NONE,
   TRAIL_LEN_FEW,
   TRAIL_LEN_MID,
@@ -137,6 +138,8 @@ export interface VizConfig {
   sharedPacketPx: number
   /** 中心同士の距離を共通ワードの件数の段階で決める(rev4。distanceByScore も on のときに効く) */
   trailTiered: boolean
+  /** 段階で決めるときの中心同士の線のバネの硬さ(子の線は springK のまま) */
+  trailSpringK: number
   /** 共通ワード 0 件(none)の中心同士の線の自然長 */
   trailLenNone: number
   /** 1〜3件(few) */
@@ -180,6 +183,7 @@ const RELATION_VALUES = {
   trailSharedBonus: TRAIL_SHARED_BONUS,
   trailSharedCap: TRAIL_SHARED_CAP,
   sharedPacketPx: SHARED_PACKET_PX,
+  trailSpringK: TRAIL_SPRING_K,
   trailLenNone: TRAIL_LEN_NONE,
   trailLenFew: TRAIL_LEN_FEW,
   trailLenMid: TRAIL_LEN_MID,
@@ -354,6 +358,7 @@ export const DEFAULT_PRESET = 'rev2'
  *   trail*Bonus    縮めすぎても childSpringMin で止まるので、大きめまで許す
  *   trailSharedCap 共通ワードは多くても表示中の件数(neighborLimit + moreMax)まで
  *   sharedPacketPx        1 未満は見えない。8 を超えるとノード(一次 6〜9px)と見分けにくい
+ *   trailSpringK          springK と同じ範囲(0.2 を超えると振動が止まらない)
  *   trailLen*             childSpring* と同じく、画面に収まる範囲まで。段階の順(None > Many)は
  *                         入れ替えても壊れない(近い・遠いの意味が逆になるだけ)
  *   arrivalSharedMs       0 で強調しない。10 秒を超えると、次の操作までずっと減光しているのと変わらない
@@ -389,6 +394,7 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   trailSharedBonus: { min: 0, max: 50, step: 0.5 },
   trailSharedCap: { min: 0, max: 150 },
   sharedPacketPx: { min: 1, max: 8, step: 0.1 },
+  trailSpringK: { min: 0, max: 0.2, step: 0.001 },
   trailLenNone: { min: 1, max: 600, step: 1 },
   trailLenFew: { min: 1, max: 600, step: 1 },
   trailLenMid: { min: 1, max: 600, step: 1 },
@@ -417,6 +423,7 @@ export const LAYOUT_KEYS = [
   'trailSharedCap',
   // 中心同士の距離の段階(タスク07。rev4)
   'trailTiered',
+  'trailSpringK',
   'trailLenNone',
   'trailLenFew',
   'trailLenMid',
@@ -458,6 +465,7 @@ export const RELATION_KEYS = [
   'trailSharedBonus',
   'trailSharedCap',
   'trailTiered',
+  'trailSpringK',
   'trailLenNone',
   'trailLenFew',
   'trailLenMid',
@@ -608,6 +616,7 @@ export function coerceConfig(
       r.sharedPacketPx.max
     ),
     trailTiered: bool(raw.trailTiered, base.trailTiered),
+    trailSpringK: float(raw.trailSpringK, base.trailSpringK, r.trailSpringK.min, r.trailSpringK.max),
     trailLenNone: float(raw.trailLenNone, base.trailLenNone, r.trailLenNone.min, r.trailLenNone.max),
     trailLenFew: float(raw.trailLenFew, base.trailLenFew, r.trailLenFew.min, r.trailLenFew.max),
     trailLenMid: float(raw.trailLenMid, base.trailLenMid, r.trailLenMid.min, r.trailLenMid.max),

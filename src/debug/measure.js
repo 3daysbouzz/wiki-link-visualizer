@@ -19,8 +19,11 @@ import * as THREE from 'three'
 import { expandRoute, fetchPageviews } from '../api/wikipedia.js'
 import { buildGraph } from '../utils/buildGraph.js'
 import { seededRandom } from '../utils/prng.js'
-import { computeEdgeSpringLength, arrivalHighlightSet, trailTier } from '../utils/relation.js'
-import { initialPosition, stepForces, fitCamera } from '../utils/forceLayout.js'
+import {
+  arrivalHighlightSet,
+  trailTier,
+} from '../utils/relation.js'
+import { buildSim, settleSim, fitCamera } from '../utils/forceLayout.js'
 import {
   projectToScreen,
   isOnScreen,
@@ -52,10 +55,9 @@ import {
   summarizeViews,
   round,
 } from '../utils/screenMetrics.js'
-import { PRESETS, LAYOUT_KEYS } from '../config/presets.ts'
-import { BENCH_ROUTES } from './benchRoutes.js'
+import { PRESETS } from '../config/presets.ts'
+import { BENCH_ROUTES, routeKeysOf } from './benchRoutes.js'
 import {
-  ALPHA_MIN,
   SIM_STEPS_PER_SEC,
   CAMERA_FOV,
   FIT_PADDING,
@@ -104,11 +106,12 @@ const WORST_OF = {
  * 測る。options はすべて省略可(省略時は全部を測る)。
  * overrides はプリセットごとの値の上書き(値の調整を試すとき用。例: { rev4: { trailLenFew: 150 } })。
  * 上書きした値も結果の条件(conditions.config)に残る
- * @param {{routes?:string[], presets?:string[], viewports?:string[], overrides?:Record<string, object>}} [options]
+ * @param {{routes?:string[]|string, presets?:string[], viewports?:string[], overrides?:Record<string, object>}} [options]
  * @param {{onProgress?:(text:string|null)=>void}} [hooks] 進み具合(ステータス行に出す文言)
  */
 export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
-  const routeKeys = options.routes ?? BENCH_ROUTES.map((r) => r.key)
+  // routes は key の配列か、組の名前('default' | 'tiers' | 'all')。既定は 'default'
+  const routeKeys = routeKeysOf(options.routes ?? 'default')
   const presetNames = options.presets ?? DEFAULT_PRESETS
   const viewportKeys = options.viewports ?? DEFAULT_VIEWPORTS
 
@@ -248,39 +251,15 @@ async function loadLabelFonts() {
  * 途中の INITIAL_FIT_DELAY_MS 相当のステップで、アプリが最初に全体を収めるときの距離を求める
  */
 function settleLayout(graph, config) {
-  const layout = {}
-  for (const k of LAYOUT_KEYS) layout[k] = config[k]
-
-  // Graph3D の syncGraph と同じ順(graphData.nodes の順)に並べる。反発の計算順が配置に効く
-  const nodes = new Map()
-  for (const g of graph.nodes) {
-    const node = { id: g.id, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 }
-    initialPosition(config.seed, g.id, node)
-    nodes.set(g.id, node)
-  }
-  const links = graph.links
-    .map((l) => ({
-      source: typeof l.source === 'object' ? l.source.id : l.source,
-      target: typeof l.target === 'object' ? l.target.id : l.target,
-      type: l.type,
-      relScore: l.relScore || 0,
-      mutual: l.mutual ? 1 : 0,
-      sharedCount: l.sharedCount || 0,
-    }))
-    .filter((l) => nodes.has(l.source) && nodes.has(l.target))
-  for (const link of links) link.springLength = computeEdgeSpringLength(link, layout)
-
-  const sim = { nodes, links, layout, alpha: 1, jitter: seededRandom(config.seed, 'jitter') }
+  const sim = buildSim(graph, config)
   const fitStep = Math.round((INITIAL_FIT_DELAY_MS / 1000) * SIM_STEPS_PER_SEC)
-  let steps = 0
   let fit = null
-  while (steps < MEASURE_MAX_STEPS && stepForces(sim)) {
-    steps += 1
-    if (steps === fitStep) fit = fitCamera(nodes.values(), CAMERA_FOV, FIT_PADDING, FIT_MIN_RADIUS)
-  }
+  const { steps, capped } = settleSim(sim, MEASURE_MAX_STEPS, (n) => {
+    if (n === fitStep) fit = fitCamera(sim.nodes.values(), CAMERA_FOV, FIT_PADDING, FIT_MIN_RADIUS)
+  })
   // fitStep より前に落ち着いた場合は、落ち着いた配置で収める
-  if (!fit) fit = fitCamera(nodes.values(), CAMERA_FOV, FIT_PADDING, FIT_MIN_RADIUS)
-  return { nodes, links, steps, capped: sim.alpha >= ALPHA_MIN, fitStep, fit }
+  if (!fit) fit = fitCamera(sim.nodes.values(), CAMERA_FOV, FIT_PADDING, FIT_MIN_RADIUS)
+  return { nodes: sim.nodes, links: sim.links, steps, capped, fitStep, fit }
 }
 
 /** 各ノードの階層・大きさ・ラベルの寸法と、中心の子(関連スコア順)をまとめる */

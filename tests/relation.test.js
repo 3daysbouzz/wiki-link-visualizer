@@ -13,6 +13,7 @@ import {
   packetRoutesFor,
   trailTier,
   trailTierLength,
+  computeEdgeSpringK,
   arrivalHighlightSet,
   startsArrival,
 } from '../src/utils/relation.js'
@@ -34,6 +35,7 @@ import {
   TRAIL_TIER_FEW_MAX,
   TRAIL_TIER_MID_MAX,
   TRAIL_TIERED,
+  TRAIL_SPRING_K,
   TRAIL_LEN_NONE,
   TRAIL_LEN_FEW,
   TRAIL_LEN_MID,
@@ -364,6 +366,16 @@ describe('中心同士の距離の段階(trailTier。タスク07)', () => {
     )
   })
 
+  test('中心同士の線の硬さは、段階を使うとき(rev4)だけ trailSpringK。ほかは null(springK のまま)', () => {
+    assert.equal(computeEdgeSpringK({ type: 'trail' }, PRESETS.rev4), PRESETS.rev4.trailSpringK)
+    assert.equal(computeEdgeSpringK({ type: 'child' }, PRESETS.rev4), null)
+    for (const name of ['current', 'rev2', 'mesh', 'rev3']) {
+      assert.equal(computeEdgeSpringK({ type: 'trail' }, PRESETS[name]), null, name)
+    }
+    // 段階を on にしても distanceByScore が off なら効かない(off はどの線も従来どおり)
+    assert.equal(computeEdgeSpringK({ type: 'trail' }, { ...PRESETS.rev4, distanceByScore: false }), null)
+  })
+
   test('rev4 の子の線はすべて springLength(子の距離は使わない)', () => {
     const c = PRESETS.rev4
     for (const relScore of [0, 0.5, 1]) {
@@ -455,6 +467,7 @@ describe('プリセット rev4(タスク07)', () => {
   test('current の新しい項目は constants.js の既定値と同じで、数値項目は RANGES に範囲がある', () => {
     const c = PRESETS.current
     assert.equal(c.trailTiered, TRAIL_TIERED)
+    assert.equal(c.trailSpringK, TRAIL_SPRING_K)
     assert.equal(c.trailLenNone, TRAIL_LEN_NONE)
     assert.equal(c.trailLenFew, TRAIL_LEN_FEW)
     assert.equal(c.trailLenMid, TRAIL_LEN_MID)
@@ -463,7 +476,7 @@ describe('プリセット rev4(タスク07)', () => {
     assert.equal(c.arrivalSharedMs, ARRIVAL_SHARED_MS)
     assert.equal(c.arrivalSharedFadeMs, ARRIVAL_SHARED_FADE_MS)
     assert.equal(c.arrivalSharedMax, ARRIVAL_SHARED_MAX)
-    for (const key of ['trailLenNone', 'trailLenFew', 'trailLenMid', 'trailLenMany', 'arrivalSharedMs', 'arrivalSharedFadeMs', 'arrivalSharedMax']) {
+    for (const key of ['trailSpringK', 'trailLenNone', 'trailLenFew', 'trailLenMid', 'trailLenMany', 'arrivalSharedMs', 'arrivalSharedFadeMs', 'arrivalSharedMax']) {
       assert.ok(RANGES[key], key)
       assert.ok(c[key] >= RANGES[key].min && c[key] <= RANGES[key].max, key)
     }

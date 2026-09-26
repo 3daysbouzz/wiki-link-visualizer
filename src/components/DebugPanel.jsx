@@ -151,6 +151,7 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
           ),
           trailSharedCap: slider('trailSharedCap', 'trailSharedCap', '共通ワードを数える上限'),
           trailTiered: toggle('trailTiered', '中心同士の距離を共通ワードの件数の段階で決める(rev4)'),
+          trailSpringK: slider('trailSpringK', 'trailSpringK', '段階で決めるときの中心同士の線の硬さ'),
           trailLenNone: slider('trailLenNone', 'trailLenNone', '共通ワード 0 件の中心同士の距離'),
           trailLenFew: slider('trailLenFew', 'trailLenFew', '1〜3件'),
           trailLenMid: slider('trailLenMid', 'trailLenMid', '4〜7件'),

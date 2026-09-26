@@ -74,13 +74,13 @@ src/
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
     └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける
-tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・画面上の見え方の測定)
+tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・配置の回帰・画面上の見え方の測定)
 ```
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
 `src/utils/depthFade.js`(ラベルの深さフェードの計算)は SPEC 6.3。
 `src/utils/buildGraph.js`(trail からグラフを組み立てる)は SPEC 7章、
-`src/utils/relation.js`(関連の強さを配置と動きで見せる計算。rev3)は SPEC 6.9。
+`src/utils/relation.js`(関連の強さを配置と動きで見せる計算・到着時の強調の対象。rev3・rev4)は SPEC 6.9・6.10。
 `src/utils/forceLayout.js`(力学の1ステップ・初期位置・全体を収める距離)・`labelSelect.js`(ラベルの間引きの判断)・
 `screenProjection.js`(画面への投影・測定用の視点)・`nodeStyle.js`(階層と球の大きさ)は Graph3D.jsx から切り出したもので、
 **表示(Graph3D)と画面上の見え方の測定(SPEC 12.5)が同じ関数を呼ぶ。** 測定側に計算を写さないこと
@@ -115,7 +115,8 @@ tests/                        node:test のユニットテスト(API のエラ�
 - 線種 = 起点につながる線は実線、それ以外は破線
 - 不透明度 = 奥のもの(二次ノード・破線)ほど薄い
 - 現在地 = 最大の球 + 呼吸する外周リング
-- 脈動 = 中心同士の相互リンクの線(rev3 の `mutualEmphasis`。SPEC 6.9)。ほかの意味に使わない
+- 脈動 = 未使用(予約。タスク09 で「輪を閉じられる記事の合図」に使う予定)。ほかの意味に使わない
+  (中心同士の相互リンクの脈動はタスク07 で外した)
 
 両方に同じ意味を持たせない。大きさは**画面上のピクセル**で指定する
 (`Sprite` の `sizeAttenuation:false`。カメラ距離で見た目が変わらない)。
@@ -123,6 +124,12 @@ tests/                        node:test のユニットテスト(API のエラ�
 **関連記事の順位は合計スコア**(morelike の順位 + 相互リンク + 冒頭リンクの加点。SPEC 3.3)。
 重みは VizConfig の `wMorelike` / `wMutual` / `wLead`。`current` は加点なし(従来の順位)で、
 既定のプリセットは加点ありの `rev2`。スコア計算は純粋関数 `rankCandidates` に切り出してテストしている。
+`rev3`(関連の強さを配置に出す。06 の基準値)と `rev4`(到着時の共通ワード強調・中心同士の距離の段階。SPEC 6.9・6.10)は
+試験中のプリセットで、既定にはしない。
+
+**薄くする仕組み(減光・深さフェード・間引き)と、その例外は SPEC 6.10 の表にまとめている。**
+薄くする仕組みや強調を足すときは、この表に行か列を足すこと(機能ごとに足してきた結果、
+重要なラベルでも角度しだいで読めなくなっていたため)。強調は「足す」より「読めることを保証する」方を選ぶ。
 
 **関連記事の順位付けに閲覧数を使わない。** MediaWiki API の `prop=pageviews` は
 1リクエストで新たに5件しか閲覧数を返さないため、数百件の候補を閲覧数で並べる
@@ -175,8 +182,9 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 「冒頭リンク0件(取得失敗)」が続くなら parse の失敗なので、順位は冒頭の加点なしで出ている。
 重みの調整は `?debug=1` の `console.table`(プール上位20件の m・mutual・lead・score)を見て行う。
 
-見せ方を変える改善の前後は `?debug=1` の `await window.__viz.measure()` で、rev2 と rev3 を同じ条件の
-画面上の数字(M1〜M8)で比べる。基準値は `docs/tasks/06-report-baseline.md`、項目と決まりは SPEC 12.5。
+見せ方を変える改善の前後は `?debug=1` の `await window.__viz.measure()` で、rev2・rev3・rev4 を同じ条件の
+画面上の数字(M1〜M9)で比べる。値を試すときは `measure({ overrides: { rev4: {...} } })`
+(開発用の道具。使い方は SPEC 12.5 の「開発用: 値を試す」)。中心同士の距離の段階は `measure({ routes: 'tiers', presets: ['rev4'] })`。基準値は `docs/tasks/06-report-baseline.md`、項目と決まりは SPEC 12.5。
 `[measure] …閲覧数を取れなかった記事が…` の警告が出た回は、数字が再現しないことがあるので測り直す。
 
 ## 説明のしかた

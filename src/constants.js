@@ -402,12 +402,23 @@ export const TRAIL_TIER_FEW_MAX = 3
 export const TRAIL_TIER_MID_MAX = 7
 // 段階で決めるか。off なら従来(05)の計算(基準から相互リンクと共通ワードの数で縮める)
 export const TRAIL_TIERED = false
-// 段階ごとの線の自然長(ワールド座標)。反発で実際の距離は狙いより長くなるので、
-// 実際の距離(measure() の中心同士の距離)で隣り合う段階に 1.3 倍以上の差が出るように決める。
-// 値と理由は測って決めたら書き直す
-export const TRAIL_LEN_NONE = 180
-export const TRAIL_LEN_FEW = 130
-export const TRAIL_LEN_MID = 95
+// 段階で決めるときの、中心同士の線のバネの硬さ(子の線は springK のまま)。
+// 中心同士の線は1本だけで、両側の中心にぶら下がる約40件の子すべてに原点への引き戻し(centerK)が掛かる。
+// springK(0.012)のままでは線が負け、狙いの長さを変えても段階が分かれなかった。
+// 決め方(タスク07。2026-09-27): 段階ごとに2〜4組(src/debug/benchRoutes.js の tiers)で実際の距離を測り、
+// 隣り合う段階の比が最悪値でも 1.35 倍以上(1.3 に余裕を持たせた)になり、かつ段階の長さが
+// RANGES(600)に収まる範囲で、いちばん低い硬さを選んだ。
+//   0.065 以下は none を 600 より長くしないと届かない(0.04 で none 840、0.035 で 920)。
+//   低くするほど長さが伸び、同じ none でも経路による距離のばらつきが大きくなる
+// 記事を移動した直後の振動・行き過ぎは無い(SPEC 6.9 の 1b)。0.2 を超えると振動しやすい(springK の RANGES と同じ理由)
+export const TRAIL_SPRING_K = 0.07
+// 段階ごとの線の自然長(ワールド座標)。実際の距離は反発と引き戻しで狙いからずれるので、
+// 上の方法で、実際の 3D 距離の比が最悪値で none/few 1.350・few/mid 1.357・mid/many 1.351 になる値にした。
+// mid は子どうしの反発で約 190 より近づかないので、few・none を大きめにして差を取っている。
+// many は 60(指示書の目安)より短くすると中心同士の球が重なって見えるので下げない
+export const TRAIL_LEN_NONE = 580
+export const TRAIL_LEN_FEW = 340
+export const TRAIL_LEN_MID = 170
 export const TRAIL_LEN_MANY = 60
 
 // --- 到着時の共通ワード強調 (SPEC 6.10。タスク07。rev4) -----------------------
