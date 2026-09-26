@@ -1,6 +1,6 @@
 /**
  * 関連の強さを配置と動きで見せる計算のテスト(SPEC 6.9)。
- *   src/utils/relation.js   … スコアの正規化・線の自然長・共通ワード・パケットの経路・脈動
+ *   src/utils/relation.js   … スコアの正規化・線の自然長・共通ワード・パケットの経路
  *   src/utils/buildGraph.js … 線に種類と関連の強さを持たせる
  */
 import { test, describe } from 'node:test'
@@ -11,8 +11,6 @@ import {
   computeEdgeSpringLength,
   sharedTitles,
   packetRoutesFor,
-  isEmphasizedEdge,
-  mutualPulseFactor,
 } from '../src/utils/relation.js'
 import { buildGraph } from '../src/utils/buildGraph.js'
 import { readUrlState } from '../src/config/urlState.js'
@@ -26,10 +24,6 @@ import {
   TRAIL_MUTUAL_BONUS,
   TRAIL_SHARED_BONUS,
   TRAIL_SHARED_CAP,
-  MUTUAL_EMPHASIS,
-  MUTUAL_WIDTH_MULTIPLIER,
-  MUTUAL_PULSE_AMPLITUDE,
-  MUTUAL_PULSE_SPEED,
   SHARED_PACKETS,
   SHARED_PACKET_PX,
   PACKET_PX,
@@ -230,51 +224,18 @@ describe('packetRoutesFor', () => {
   })
 })
 
-describe('isEmphasizedEdge', () => {
-  test('強調するのは中心同士(trail)の相互リンクだけ。子への線は相互リンクでも対象外', () => {
-    assert.equal(isEmphasizedEdge({ type: 'trail', mutual: 1 }, ON), true)
-    assert.equal(isEmphasizedEdge({ type: 'trail', mutual: 0 }, ON), false)
-    assert.equal(isEmphasizedEdge({ type: 'child', mutual: 1 }, ON), false)
-  })
-
-  test('mutualEmphasis が off なら何も強調しない', () => {
-    assert.equal(isEmphasizedEdge({ type: 'trail', mutual: 1 }, OFF), false)
-  })
-})
-
-describe('mutualPulseFactor', () => {
-  test('1 と 1-振幅 の間を往復し、0 までは落ちない', () => {
-    const amp = 0.5
-    let min = Infinity
-    let max = -Infinity
-    for (let t = 0; t < 10; t += 0.01) {
-      const f = mutualPulseFactor(t, amp, 4)
-      min = Math.min(min, f)
-      max = Math.max(max, f)
-    }
-    assert.ok(Math.abs(min - (1 - amp)) < 1e-3)
-    assert.ok(Math.abs(max - 1) < 1e-3)
-  })
-
-  test('振幅 0 なら常に 1', () => {
-    assert.equal(mutualPulseFactor(1.23, 0, 4), 1)
-  })
-})
-
 describe('プリセット: 関連の強さ', () => {
   test('current・rev2・mesh は off、rev3 は on', () => {
     for (const name of ['current', 'rev2', 'mesh']) {
       assert.equal(PRESETS[name].distanceByScore, false, name)
-      assert.equal(PRESETS[name].mutualEmphasis, false, name)
       assert.equal(PRESETS[name].sharedPackets, false, name)
     }
     assert.equal(PRESETS.rev3.distanceByScore, true)
-    assert.equal(PRESETS.rev3.mutualEmphasis, true)
     assert.equal(PRESETS.rev3.sharedPackets, true)
   })
 
   test('rev3 は on/off 以外 rev2 と同じ(違いだけを比べられる)', () => {
-    const ONLY = ['distanceByScore', 'mutualEmphasis', 'sharedPackets']
+    const ONLY = ['distanceByScore', 'sharedPackets']
     for (const [key, v] of Object.entries(PRESETS.rev2)) {
       if (ONLY.includes(key)) continue
       assert.equal(PRESETS.rev3[key], v, `${key} が rev2 と違う`)
@@ -290,10 +251,6 @@ describe('プリセット: 関連の強さ', () => {
     assert.equal(c.trailMutualBonus, TRAIL_MUTUAL_BONUS)
     assert.equal(c.trailSharedBonus, TRAIL_SHARED_BONUS)
     assert.equal(c.trailSharedCap, TRAIL_SHARED_CAP)
-    assert.equal(c.mutualEmphasis, MUTUAL_EMPHASIS)
-    assert.equal(c.mutualWidthMultiplier, MUTUAL_WIDTH_MULTIPLIER)
-    assert.equal(c.mutualPulseAmplitude, MUTUAL_PULSE_AMPLITUDE)
-    assert.equal(c.mutualPulseSpeed, MUTUAL_PULSE_SPEED)
     assert.equal(c.sharedPackets, SHARED_PACKETS)
     assert.equal(c.sharedPacketPx, SHARED_PACKET_PX)
   })
@@ -312,9 +269,6 @@ describe('プリセット: 関連の強さ', () => {
       'trailMutualBonus',
       'trailSharedBonus',
       'trailSharedCap',
-      'mutualWidthMultiplier',
-      'mutualPulseAmplitude',
-      'mutualPulseSpeed',
       'sharedPacketPx',
     ]) {
       assert.ok(RANGES[key], key)
@@ -332,9 +286,27 @@ describe('URL クエリ: 関連の強さ', () => {
     assert.equal(on.presetName, 'rev3')
     assert.equal(on.config.distanceByScore, true)
 
-    const r = readUrlState('?preset=rev3&distanceByScore=0&childSpringMin=40&mutualPulseAmplitude=5')
+    const r = readUrlState('?preset=rev3&distanceByScore=0&childSpringMin=40&sharedPacketPx=50')
     assert.equal(r.config.distanceByScore, false)
     assert.equal(r.config.childSpringMin, 40)
-    assert.equal(r.config.mutualPulseAmplitude, RANGES.mutualPulseAmplitude.max)
+    assert.equal(r.config.sharedPacketPx, RANGES.sharedPacketPx.max)
+  })
+})
+
+describe('相互リンクの脈動(タスク07で外した)', () => {
+  const REMOVED = ['mutualEmphasis', 'mutualWidthMultiplier', 'mutualPulseAmplitude', 'mutualPulseSpeed']
+
+  test('どのプリセット・RANGES にも項目が無い', () => {
+    for (const [name, preset] of Object.entries(PRESETS)) {
+      for (const key of REMOVED) assert.equal(key in preset, false, `${name}.${key}`)
+    }
+    for (const key of REMOVED) assert.equal(key in RANGES, false, key)
+  })
+
+  test('古い URL に付いていてもエラーにならず、無視される', () => {
+    const r = readUrlState('?preset=rev3&mutualEmphasis=1&mutualWidthMultiplier=3&mutualPulseAmplitude=0.5&mutualPulseSpeed=4')
+    assert.equal(r.presetName, 'rev3')
+    assert.deepEqual(r.overrides, [])
+    for (const key of REMOVED) assert.equal(key in r.config, false, key)
   })
 })

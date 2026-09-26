@@ -37,10 +37,6 @@ import {
   TRAIL_MUTUAL_BONUS,
   TRAIL_SHARED_BONUS,
   TRAIL_SHARED_CAP,
-  MUTUAL_EMPHASIS,
-  MUTUAL_WIDTH_MULTIPLIER,
-  MUTUAL_PULSE_AMPLITUDE,
-  MUTUAL_PULSE_SPEED,
   SHARED_PACKETS,
   SHARED_PACKET_PX,
 } from '../constants.js'
@@ -126,14 +122,6 @@ export interface VizConfig {
   trailSharedBonus: number
   /** 共通ワードを数える上限 */
   trailSharedCap: number
-  /** 中心同士の相互リンクの線を太さと脈動で強調する(子への線は対象外) */
-  mutualEmphasis: boolean
-  /** 相互リンクの線の太さ(通常の線に対する倍率) */
-  mutualWidthMultiplier: number
-  /** 脈動の振幅(明るさが 1 と 1-振幅 の間を往復する) */
-  mutualPulseAmplitude: number
-  /** 脈動の速さ(ラジアン/秒) */
-  mutualPulseSpeed: number
   /** 前後の中心に共通する関連ワードを通る経路にパケットを流す(SPEC 6.7) */
   sharedPackets: boolean
   /** 共通ワードを通るパケットの半径(px) */
@@ -164,16 +152,12 @@ const RELATION_VALUES = {
   trailMutualBonus: TRAIL_MUTUAL_BONUS,
   trailSharedBonus: TRAIL_SHARED_BONUS,
   trailSharedCap: TRAIL_SHARED_CAP,
-  mutualWidthMultiplier: MUTUAL_WIDTH_MULTIPLIER,
-  mutualPulseAmplitude: MUTUAL_PULSE_AMPLITUDE,
-  mutualPulseSpeed: MUTUAL_PULSE_SPEED,
   sharedPacketPx: SHARED_PACKET_PX,
 }
 
 /** 関連の強さの on/off。current・rev2・mesh はすべて off(従来の配置・見た目を保つ) */
 const RELATION_OFF = {
   distanceByScore: DISTANCE_BY_SCORE,
-  mutualEmphasis: MUTUAL_EMPHASIS,
   sharedPackets: SHARED_PACKETS,
 }
 
@@ -279,7 +263,6 @@ export const PRESETS: Record<string, VizConfig> = {
 PRESETS.rev3 = {
   ...PRESETS.rev2,
   distanceByScore: true,
-  mutualEmphasis: true,
   sharedPackets: true,
 }
 
@@ -316,9 +299,6 @@ export const DEFAULT_PRESET = 'rev2'
  *   trailSpringBase 子より外側に置く基準なので、springLength より上限を広く取る
  *   trail*Bonus    縮めすぎても childSpringMin で止まるので、大きめまで許す
  *   trailSharedCap 共通ワードは多くても表示中の件数(neighborLimit + moreMax)まで
- *   mutualWidthMultiplier 1 で通常の線と同じ太さ。4 を超えると線が帯に見える
- *   mutualPulseAmplitude  0 で脈動なし、1 で谷で消える
- *   mutualPulseSpeed      0 で止まる。20(約0.3秒周期)を超えると点滅に見える
  *   sharedPacketPx        1 未満は見えない。8 を超えるとノード(一次 6〜9px)と見分けにくい
  */
 export const RANGES: Record<string, { min: number; max: number; step?: number }> = {
@@ -349,9 +329,6 @@ export const RANGES: Record<string, { min: number; max: number; step?: number }>
   trailMutualBonus: { min: 0, max: 300, step: 1 },
   trailSharedBonus: { min: 0, max: 50, step: 0.5 },
   trailSharedCap: { min: 0, max: 150 },
-  mutualWidthMultiplier: { min: 1, max: 4, step: 0.05 },
-  mutualPulseAmplitude: { min: 0, max: 1, step: 0.05 },
-  mutualPulseSpeed: { min: 0, max: 20, step: 0.1 },
   sharedPacketPx: { min: 1, max: 8, step: 0.1 },
 }
 
@@ -390,10 +367,6 @@ export const VISUAL_KEYS = [
   'fadeStart',
   'fadeEnd',
   // 関連の強さのうち見た目だけに効くもの(SPEC 6.9)
-  'mutualEmphasis',
-  'mutualWidthMultiplier',
-  'mutualPulseAmplitude',
-  'mutualPulseSpeed',
   'sharedPackets',
   'sharedPacketPx',
 ] as const
@@ -407,10 +380,6 @@ export const RELATION_KEYS = [
   'trailMutualBonus',
   'trailSharedBonus',
   'trailSharedCap',
-  'mutualEmphasis',
-  'mutualWidthMultiplier',
-  'mutualPulseAmplitude',
-  'mutualPulseSpeed',
   'sharedPackets',
   'sharedPacketPx',
 ] as const
@@ -544,25 +513,6 @@ export function coerceConfig(
       base.trailSharedCap,
       r.trailSharedCap.min,
       r.trailSharedCap.max
-    ),
-    mutualEmphasis: bool(raw.mutualEmphasis, base.mutualEmphasis),
-    mutualWidthMultiplier: float(
-      raw.mutualWidthMultiplier,
-      base.mutualWidthMultiplier,
-      r.mutualWidthMultiplier.min,
-      r.mutualWidthMultiplier.max
-    ),
-    mutualPulseAmplitude: float(
-      raw.mutualPulseAmplitude,
-      base.mutualPulseAmplitude,
-      r.mutualPulseAmplitude.min,
-      r.mutualPulseAmplitude.max
-    ),
-    mutualPulseSpeed: float(
-      raw.mutualPulseSpeed,
-      base.mutualPulseSpeed,
-      r.mutualPulseSpeed.min,
-      r.mutualPulseSpeed.max
     ),
     sharedPackets: bool(raw.sharedPackets, base.sharedPackets),
     sharedPacketPx: float(

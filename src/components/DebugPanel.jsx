@@ -150,18 +150,6 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
             '共通ワード1件あたりに縮める量'
           ),
           trailSharedCap: slider('trailSharedCap', 'trailSharedCap', '共通ワードを数える上限'),
-          mutualEmphasis: toggle('mutualEmphasis', '中心同士の相互リンクの線を太さと脈動で強調する'),
-          mutualWidthMultiplier: slider(
-            'mutualWidthMultiplier',
-            'mutualWidthMultiplier',
-            '相互リンクの線の太さ(倍)'
-          ),
-          mutualPulseAmplitude: slider(
-            'mutualPulseAmplitude',
-            'mutualPulseAmplitude',
-            '脈動の振幅。主役なので目に見える大きさに'
-          ),
-          mutualPulseSpeed: slider('mutualPulseSpeed', 'mutualPulseSpeed', '脈動の速さ(rad/秒)'),
           sharedPackets: toggle(
             'sharedPackets',
             '前の中心 → 共通ワード → 今の中心 にパケットを流す'
