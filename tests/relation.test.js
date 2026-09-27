@@ -398,8 +398,8 @@ describe('到着時の共通ワード強調の対象(arrivalHighlightSet。タ�
     assert.deepEqual(set.shared, ['w', 'y', 'x', 'z'])
     assert.deepEqual(set.labeled, ['w', 'y', 'x'])
     assert.deepEqual([...set.nodes].sort(), ['A', 'B', 'w', 'x', 'y', 'z'])
-    // ラベルを出すのは前後の中心と上位 max 件だけ
-    assert.deepEqual(set.labelOrder, ['B', 'A', 'w', 'y', 'x'])
+    // ラベルを出すのは前後の中心と上位 max 件だけ。今の中心 → 共通ワード → 前の中心 の順に場所を取る
+    assert.deepEqual(set.labelOrder, ['B', 'w', 'y', 'x', 'A'])
     assert.deepEqual(set.links, [
       ['A', 'B'],
       ['A', 'w'], ['w', 'B'],

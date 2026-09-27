@@ -430,8 +430,12 @@ export const ARRIVAL_SHARED = false
 export const ARRIVAL_SHARED_MS = 2500
 // 通常の表示に戻す時間(ms)
 export const ARRIVAL_SHARED_FADE_MS = 500
-// ラベルを保証する共通ワードの上限(今の中心の並び順 = 関連スコアの順で上から)
-export const ARRIVAL_SHARED_MAX = 8
+// 名前を保証する共通ワードの件数(今の中心の並び順 = 関連スコアの順で上から)。残りは点と線だけ明るく、件数をステータス行に出す。
+// 1 にした理由(タスク07。2026-09-27): work・science の両経路、pc と phone、周回の最悪値でも全件読めるのが 1 件までだった。
+// 共通ワードが多い組は中心同士が近く(画面上で pc 約19px・phone 約9px)、共通ワードはそのあいだに集まるので、
+// 2件以上は角度によって重なる(2件で最悪 1件、4件で最悪 2〜3件)。回さずに見る初期視点だけなら 4件まで読める。
+// 最初のカメラ距離の決め方(タスク08)で画面上の間隔が広がれば、増やせる可能性がある
+export const ARRIVAL_SHARED_MAX = 1
 
 // --- 画面上の見え方の測定 (SPEC 12.5。タスク06) ----------------------------
 // ?debug=1 の window.__viz.measure() が使う「測る条件」。表示の調整値ではないので VizConfig には入れない

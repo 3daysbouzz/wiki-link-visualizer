@@ -203,10 +203,26 @@ describe('ラベルの注目状態: 到着時の共通ワード強調(focusForAr
     assert.deepEqual(selectLabels(items, opts(null)).map((r) => r.reason), ['shown', 'depth', 'depth', 'shown', 'shown'])
   })
 
-  test('対象どうしが重なったら、今の中心の並び順が上のもの(labelOrder の前)が場所を取る', () => {
-    // s2 の方がカメラに近いが、並び順は s1 が上
+  test('対象どうしが重なったら、並び順が上のもの(labelOrder の前)が先に場所を取り、後のものは別の位置を探す', () => {
+    // s2 の方がカメラに近いが、並び順は s1 が上。同じ場所の s2 は右が塞がっているので左に置く
     const items = [item('s2', 0, 1, { pos: { x: 0, y: 0, z: 20 } }), item('s1', 0, 1)]
-    const reasons = selectLabels(items, opts(focusForArrival(set))).map((r) => r.reason)
-    assert.deepEqual(reasons, ['overlap', 'shown'])
+    const res = selectLabels(items, opts(focusForArrival(set)))
+    assert.deepEqual(res.map((r) => r.reason), ['shown', 'shown'])
+    assert.ok(res[1].center.x < 0, 's1 は右(既定の位置)')
+    assert.ok(res[0].center.x > 1, 's2 は左へ移る')
+  })
+
+  test('右・左・上・下のどこも塞がっていれば overlap になる', () => {
+    // 同じ場所に対象が5つ。右・左・上・下の4か所が埋まったら5つ目は出せない
+    const five = { nodes: new Set(['a', 'b', 'c', 'd', 'e']), labelOrder: ['a', 'b', 'c', 'd', 'e'] }
+    const items = ['a', 'b', 'c', 'd', 'e'].map((id) => item(id, 0, 1))
+    const reasons = selectLabels(items, opts(focusForArrival(five))).map((r) => r.reason)
+    assert.deepEqual(reasons, ['shown', 'shown', 'shown', 'shown', 'overlap'])
+  })
+
+  test('ホバー(focus の altPlacement なし)では置き場所を変えない', () => {
+    const items = [item('s2', 0, 1, { pos: { x: 0, y: 0, z: 20 } }), item('s1', 0, 1)]
+    const reasons = selectLabels(items, { ...opts(null), hoveredId: 's2', neighbors: new Set(['s1']) }).map((r) => r.reason)
+    assert.deepEqual(reasons, ['shown', 'overlap'])
   })
 })

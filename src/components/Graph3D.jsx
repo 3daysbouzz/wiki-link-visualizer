@@ -942,6 +942,8 @@ const Graph3D = forwardRef(function Graph3D(
         fade: Math.round(n.labelFade * 1000) / 1000,
         opacity: n.label ? Math.round(n.label.material.opacity * 1000) / 1000 : 0,
         reason: n._labelReason,
+        // ラベルの置き場所(Sprite.center)。到着時の強調では右・左・上・下のどこに置いたかが分かる
+        anchor: n.label ? [Math.round(n.label.center.x * 100) / 100, Math.round(n.label.center.y * 100) / 100] : null,
       }))
     },
 

@@ -188,9 +188,28 @@ export function selectLabels(items, opts) {
       continue
     }
 
-    const overlaps = rects.some(
-      (o) => !(rect.x2 < o.x1 || rect.x1 > o.x2 || rect.y2 < o.y1 || rect.y1 > o.y2)
-    )
+    const hits = (q) =>
+      rects.some((o) => !(q.x2 < o.x1 || q.x1 > o.x2 || q.y2 < o.y1 || q.y1 > o.y2))
+    let overlaps = hits(rect)
+    // 到着時の強調で名前を保証するラベル(SPEC 6.10)は、ぶつかったら 右 → 左 → 上 → 下 の順に空いている場所を探す。
+    // 共通ワードは前後の中心のあいだに来るので、右か左の決まった位置だと中心のラベルと重なりやすいため。
+    // ふだんのラベル(ホバー・通常)は置き場所を変えない(回転のたびに左右上下へ跳ねると読みにくい)
+    if (overlaps && focus && focus.altPlacement && focus.ids.has(item.id) && !item.isCurrent) {
+      const placements = [
+        { center: { x: -r / labelW, y: 0.5 }, rect: { x1: sx + r, x2: sx + r + labelW, y1: sy - labelH / 2, y2: sy + labelH / 2 } },
+        { center: { x: 1 + r / labelW, y: 0.5 }, rect: { x1: sx - r - labelW, x2: sx - r, y1: sy - labelH / 2, y2: sy + labelH / 2 } },
+        { center: { x: 0.5, y: -r / labelH }, rect: { x1: sx - labelW / 2, x2: sx + labelW / 2, y1: sy - r - labelH, y2: sy - r } },
+        { center: { x: 0.5, y: 1 + r / labelH }, rect: { x1: sx - labelW / 2, x2: sx + labelW / 2, y1: sy + r, y2: sy + r + labelH } },
+      ]
+      for (const p of placements) {
+        const q = p.rect
+        if (q.x1 < 0 || q.x2 > width || q.y1 < 0 || q.y2 > height || hits(q)) continue
+        rect = q
+        res.center = p.center
+        overlaps = false
+        break
+      }
+    }
     if (overlaps) {
       res.reason = 'overlap'
       continue
@@ -221,8 +240,9 @@ export function focusForHover(hoveredId, neighbors) {
 
 /**
  * 到着時の共通ワード強調の注目状態(SPEC 6.10)。前後の中心と、名前を保証する共通ワード(labelOrder)だけに
- * ラベルを出し、labelOrder の順(今の中心 → 前の中心 → 共通ワードの関連スコア順)に場所を取る。
- * これらは深さフェードを受けない。保証しない共通ワードは点と線だけ明るく、名前は出さない(件数はステータス行)
+ * ラベルを出し、labelOrder の順(今の中心 → 共通ワードの関連スコア順 → 前の中心)に場所を取る。
+ * これらは深さフェードを受けず、ぶつかったら別の位置を探す(altPlacement)。
+ * 保証しない共通ワードは点と線だけ明るく、名前は出さない(件数はステータス行)
  * @param {{labelOrder:string[]}} set arrivalHighlightSet の戻り値
  */
 export function focusForArrival(set) {
@@ -233,5 +253,6 @@ export function focusForArrival(set) {
     ids,
     priority: (id) => rank.get(id) ?? set.labelOrder.length,
     exempt: ids,
+    altPlacement: true,
   }
 }

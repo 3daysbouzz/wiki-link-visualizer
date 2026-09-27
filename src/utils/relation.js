@@ -169,7 +169,9 @@ export function trailTierLength(tier, config) {
  *   labeled … 名前を保証する共通ワード。shared の上位 max 件。残りは件数だけ示す(App のステータス行)
  *   ノード  … 前の中心・今の中心・共通ワードすべて(減光しない。点と線で「どこにあるか」は分かる)
  *   線      … 前の中心 ↔ 共通ワード、共通ワード ↔ 今の中心、前の中心 ↔ 今の中心
- *   labelOrder … ラベルを出す対象と、場所を取る順。今の中心 → 前の中心 → labeled
+ *   labelOrder … ラベルを出す対象と、場所を取る順。今の中心 → labeled → 前の中心。
+ *                共通ワードを前の中心より先にするのは、共通ワードが前後の中心のあいだに来て、
+ *                前の中心のラベルと場所を取り合うため(前の中心は訪問済みの中空の球で明るく残るので、名前が出なくても分かる)
  *
  * 上位を関連スコアの順で選ぶのは、同じ経路ならいつ開いても同じ顔ぶれになるため(閲覧数は日によって変わり、
  * 取れなかった記事は値が無い)。ラベルの置き場所・パケットの順も同じ関連スコアの順で揃っている。
@@ -203,7 +205,7 @@ export function arrivalHighlightSet(trail, expansions, max, config = {}) {
     labeled,
     nodes: new Set([prev, current, ...shared]),
     links,
-    labelOrder: [current, prev, ...labeled],
+    labelOrder: [current, ...labeled, prev],
   }
 }
 
