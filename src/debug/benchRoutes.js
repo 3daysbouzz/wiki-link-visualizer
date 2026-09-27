@@ -6,6 +6,7 @@
  *   default … 見え方の比較の基本(06 の3本 + coffee)
  *   tiers   … 中心同士の距離の段階(SPEC 6.9 の 1b)を確かめる組。段階ごとに2〜3経路。
  *             measure({ routes: 'tiers', presets: ['rev4'], viewports: ['pc'] }) で測る
+ *   walks   … 中心5件の長い経路(タスク09)。M10 と表示件数の比較に使う
  * tier は2つの中心の共通ワードの件数による段階(rev2 の重み・種 1 で実測。2026-09-27)
  *
  * seed は抽選と初期配置の種。比べるプリセットすべてにこの値を使う
@@ -58,6 +59,21 @@ export const BENCH_ROUTES = [
   { key: 'mid-shogi', sets: ['tiers'], start: '将棋', path: ['羽生善治'], seed: 1, note: 'mid(共通 4件。下端)' },
   { key: 'many-tsuina', sets: ['tiers'], start: '鏡音リン・レン', path: ['ついなちゃん'], seed: 1, note: 'many(共通 8件。下端)' },
   { key: 'many-american', sets: ['tiers'], start: 'コーヒー', path: ['アメリカン・コーヒー'], seed: 1, note: 'many(共通 13件)' },
+  // --- 長い経路(walks。タスク09)。中心5件。M10(輪を閉じられる候補)と表示件数の比較に使う ---
+  // 展開結果は tests/fixtures/walk-routes.json(rev2 の重み・種 1・40件。2026-09-28 に取得)。歩き方は2種類:
+  //   walk-top-…  … 毎回、まだ通っていない子のうち関連スコアがいちばん高い記事へ進む
+  //   walk-draw-… … 毎回、n24 の抽選の枠(展開結果の11〜24件目)の子のうち、まだ通っていない関連スコアがいちばん高い記事へ進む。
+  //                  n24・n30・n40 のどれにも含まれるので、どの変種でも同じ経路になる
+  { key: 'walk-top-初音ミク', sets: ['walks'], start: '初音ミク', path: ["クリプトン・フューチャー・メディア","伊藤博之 (実業家)","標茶町","川上郡"], seed: 1, note: '毎回いちばん関連が強い子へ' },
+  { key: 'walk-top-流体力学', sets: ['walks'], start: '流体力学', path: ["ナビエ–ストークス方程式","連続体力学","応力","ひずみ"], seed: 1, note: '毎回いちばん関連が強い子へ' },
+  { key: 'walk-top-綾波レイ', sets: ['walks'], start: '綾波レイ', path: ["新世紀エヴァンゲリオンの登場人物","使徒 (新世紀エヴァンゲリオン)","エヴァンゲリオン (架空の兵器)","ヱヴァンゲリヲン新劇場版"], seed: 1, note: '毎回いちばん関連が強い子へ' },
+  { key: 'walk-top-コーヒー', sets: ['walks'], start: 'コーヒー', path: ["エスプレッソ","モカエキスプレス","コーヒーメーカー","フレンチプレス"], seed: 1, note: '毎回いちばん関連が強い子へ' },
+  { key: 'walk-top-富士山', sets: ['walks'], start: '富士山', path: ["富士登山","登山","山小屋","宿泊施設"], seed: 1, note: '毎回いちばん関連が強い子へ' },
+  { key: 'walk-draw-初音ミク', sets: ['walks'], start: '初音ミク', path: ["初音ミク -Project DIVA-","Livetune","インクストゥエンター","こゑだ"], seed: 1, note: 'n24 の抽選枠からいちばん関連が強い子へ' },
+  { key: 'walk-draw-流体力学', sets: ['walks'], start: '流体力学', path: ["対流","流体","レオロジー","クラウジウス–デュエムの不等式"], seed: 1, note: 'n24 の抽選枠からいちばん関連が強い子へ' },
+  { key: 'walk-draw-綾波レイ', sets: ['walks'], start: '綾波レイ', path: ["惣流・アスカ・ラングレー","CR新世紀エヴァンゲリオン 〜使徒、再び〜","新世紀エヴァンゲリオン","樋口真嗣"], seed: 1, note: 'n24 の抽選枠からいちばん関連が強い子へ' },
+  { key: 'walk-draw-コーヒー', sets: ['walks'], start: 'コーヒー', path: ["カフェ","英語","スペイン語","俗ラテン語"], seed: 1, note: 'n24 の抽選枠からいちばん関連が強い子へ' },
+  { key: 'walk-draw-富士山', sets: ['walks'], start: '富士山', path: ["富士講","人穴富士講遺跡","白糸の滝 (静岡県)","山中湖"], seed: 1, note: 'n24 の抽選枠からいちばん関連が強い子へ' },
 ]
 
 /** 組の名前(default / tiers / all)か key の配列から、測る経路の key の配列にする */

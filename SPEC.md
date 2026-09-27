@@ -1319,6 +1319,32 @@ await window.__viz.measure({ data, routes: 'tiers' })
   (復元の場面は、経路の途中までを開いたときの距離を隣どうしで比べた参考値。歩く場面は距離を変えないので常に 1)
 - `measureMarkdown()` に「最初のカメラ」の表を足した
 
+**順位付けに効く値が違う変種・M10(タスク09)**
+
+```
+// 表示件数の変種を比べる(顔ぶれが違う比較)
+const data = await (await fetch('/wiki-link-visualizer/tests/fixtures/walk-routes.json')).json()
+await window.__viz.measure({ data, routes: 'walks', presets: ['rev4'], allowDifferentRanking: true, variants: [
+  { name: 'n30', base: 'rev4', overrides: { neighborLimit: 30 } },
+  { name: 'n24', base: 'rev4', overrides: { neighborLimit: 24 } },
+] })
+```
+
+- `allowDifferentRanking: true` のときだけ、順位付けに効く値(`neighborLimit`・重み・`seed`)が違う変種も比べられる。
+  値ごとにまとめて、同じ種で展開し直す。指定しなければ今までどおりエラー(顔ぶれの違う結果を黙って比べない)。
+  結果の各行の `ranking`(`key`・`differentRanking`)に記録し、`measureMarkdown()` の先頭に「顔ぶれが違う比較」と書く
+- `data`(保存した展開結果)のときは、件数だけが違う変種を**先頭から切り詰めて**比べる。
+  抽選は同じ乱数列から1件ずつ順に引くので(`pickLinks`)、同じ重み・同じ種なら、件数を減らした展開結果は多い件数の展開結果の先頭と
+  完全に同じになる(`tests/neighborLimit.test.js`)。重みや種が違う変種、保存した件数(40)より多い変種はエラー
+- **M10 輪を閉じられる候補の数**: 経路の各時点(3件目以降)で、今の中心の子のうち、2つ以上前に通った記事の数(タスク10 の演出の起きやすさの目安)。
+  結果の `M10`(`perStep`・`total`・`max`)。場面・画面によらない
+- 「共通ワードの段階の分布」の表: プリセットごとに、経路の隣り合う中心の組を none / few / mid / many に分けた数
+- 経路の組 `walks`: 中心5件の長い経路(M10 用)。歩き方は2種類で、展開結果は `tests/fixtures/walk-routes.json`
+  - `walk-top-…` … 毎回、まだ通っていない子のうち関連スコアがいちばん高い記事へ進む
+  - `walk-draw-…` … 毎回、n24 の抽選の枠(展開結果の11〜24件目)の子のうち、まだ通っていない関連スコアがいちばん高い記事へ進む
+    (n24・n30・n40 のどれにも含まれるので、どの変種でも同じ経路になる。確定枠だけを歩くと、件数を減らしても M10 がほとんど変わらず、
+    影響を小さく見積もるおそれがあるため)
+
 **開発用: 値を試す(`overrides`)**
 
 コードやプリセットを書き換えずに、値を変えたら数字がどう動くかを試す。画面に出ているグラフや URL は変わらない。

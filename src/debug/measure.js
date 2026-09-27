@@ -46,6 +46,7 @@ import { depthFadeOf } from '../utils/depthFade.js'
 import { nodeTierStyle } from '../utils/nodeStyle.js'
 import {
   assertSameRanking,
+  RANKING_KEYS,
   median,
   pearson,
   ratio,
@@ -113,8 +114,10 @@ const WORST_OF = {
  *   walk    … 検索して手で歩いた場合。最初の記事だけでカメラ距離を決め、その距離のまま経路どおりに1件ずつ進む
  * data を渡すと Wikipedia に問い合わせず、渡した展開結果で測る(例: tests/fixtures/tier-routes.json)。
  *   Wikipedia 側の変化の影響を受けないので、候補の比較や回帰に使う。閲覧数は使わない(一次ノードはすべて最小の大きさ)
+ * allowDifferentRanking を true にすると、順位付けに効く値(neighborLimit・重み・seed)が違う変種も比べられる(タスク09)。
+ *   値ごとにまとめて展開し直す(data のときは、件数だけ違う変種を先頭から切り詰める)。結果の ranking に記録する
  * 上書きした値も結果の条件(conditions.config)に残る
- * @param {{routes?:string[]|string, presets?:string[], variants?:{name:string, base:string, overrides?:object}[],
+ * @param {{routes?:string[]|string, allowDifferentRanking?:boolean, presets?:string[], variants?:{name:string, base:string, overrides?:object}[],
  *   viewports?:string[], scenarios?:string[], overrides?:Record<string, object>, data?:Record<string, {trail:string[], expansions:object}>}} [options]
  * @param {{onProgress?:(text:string|null)=>void}} [hooks] 進み具合(ステータス行に出す文言)
  */
@@ -172,71 +175,83 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
         config: { ...PRESETS[v.base], ...(v.overrides || {}), seed: route.seed },
       })),
     ]
-    assertSameRanking(named)
-    const base = named[0].config
+    // 順位付けに効く値(neighborLimit・重み・seed)が違う変種は、ふだんはエラーにする(顔ぶれの違う結果を黙って比べない)。
+    // allowDifferentRanking のときだけ、値ごとにまとめて展開し直し、結果に「顔ぶれが違う比較」と記録する
+    const groups = options.allowDifferentRanking ? groupByRanking(named) : [named]
+    if (!options.allowDifferentRanking) assertSameRanking(named)
+    const differentRanking = groups.length > 1
 
-    // --- 1. 展開(1回だけ。全プリセットで共有する) ---
-    onProgress(`${head} 展開中`)
-    const given = options.data && options.data[route.key]
-    if (options.data && !given) throw new Error(`[measure] data に経路 ${route.key} の展開結果がありません`)
-    const expansions = given ? new Map(Object.entries(given.expansions)) : new Map()
-    const trail = given ? given.trail : await expandRoute(
-      route.start,
-      route.path,
-      (assumeCanonical) => ({
-        limit: base.neighborLimit,
-        assumeCanonical,
-        randomFor: (title) => seededRandom(base.seed, title),
-        weights: { wMorelike: base.wMorelike, wMutual: base.wMutual, wLead: base.wLead },
-        debug: false,
-      }),
-      (r) => expansions.set(r.title, r.links)
-    )
+    for (const group of groups) {
+      const base = group[0].config
+      const rankingKey = rankingKeyOf(base)
 
-    // 閲覧数は一次ノードの大きさ(= ラベルの置き場所・当たり判定)に効く。表示と同じく取りに行く。
-    // 日によって変わるので、使った値を条件に残す
-    onProgress(`${head} 閲覧数`)
-    const views = new Map()
-    const titles = given ? [] : buildGraph(trail, expansions, new Map(), base).nodes.map((n) => n.id)
-    await fetchPageviews(titles, (title, v) => views.set(title, v))
-    // 取得に失敗した記事はキャッシュされず、次に測ったときに取り直される(= 数字が変わる)。
-    // 1回だけ取り直し、それでも欠けたら結果に残して警告する(その回の数字は比べられない)
-    let missing = titles.filter((t) => !views.has(t))
-    if (missing.length > 0) {
-      await fetchPageviews(missing, (title, v) => views.set(title, v))
-      missing = titles.filter((t) => !views.has(t))
-    }
-    if (missing.length > 0) {
-      console.warn(
-        '[measure] %s: 閲覧数を取れなかった記事が%d件あります。球の大きさが変わるので、もう一度測ると数字が変わることがあります: %o',
-        route.key,
-        missing.length,
-        missing
+      // --- 1. 展開(まとまりごとに1回。まとまりの中のプリセットで共有する) ---
+      onProgress(`${head} 展開中`)
+      const given = options.data && options.data[route.key]
+      if (options.data && !given) throw new Error(`[measure] data に経路 ${route.key} の展開結果がありません`)
+      const expansions = given ? truncatedExpansions(given, base, named[0].config, options.allowDifferentRanking) : new Map()
+      const trail = given ? given.trail : await expandRoute(
+        route.start,
+        route.path,
+        (assumeCanonical) => ({
+          limit: base.neighborLimit,
+          assumeCanonical,
+          randomFor: (title) => seededRandom(base.seed, title),
+          weights: { wMorelike: base.wMorelike, wMutual: base.wMutual, wLead: base.wLead },
+          debug: false,
+        }),
+        (r) => expansions.set(r.title, r.links)
       )
-    }
 
-    for (let pi = 0; pi < named.length; pi++) {
-      const { name, config } = named[pi]
-      onProgress(`${head} ${name}`)
-      // ステータス行を描き直す機会を作る(配置の計算は同期で数百ミリ秒かかる)
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      // 閲覧数は一次ノードの大きさ(= ラベルの置き場所・当たり判定)に効く。表示と同じく取りに行く。
+      // 日によって変わるので、使った値を条件に残す
+      onProgress(`${head} 閲覧数`)
+      const views = new Map()
+      const titles = given ? [] : buildGraph(trail, expansions, new Map(), base).nodes.map((n) => n.id)
+      await fetchPageviews(titles, (title, v) => views.set(title, v))
+      // 取得に失敗した記事はキャッシュされず、次に測ったときに取り直される(= 数字が変わる)。
+      // 1回だけ取り直し、それでも欠けたら結果に残して警告する(その回の数字は比べられない)
+      let missing = titles.filter((t) => !views.has(t))
+      if (missing.length > 0) {
+        await fetchPageviews(missing, (title, v) => views.set(title, v))
+        missing = titles.filter((t) => !views.has(t))
+      }
+      if (missing.length > 0) {
+        console.warn(
+          '[measure] %s: 閲覧数を取れなかった記事が%d件あります。球の大きさが変わるので、もう一度測ると数字が変わることがあります: %o',
+          route.key,
+          missing.length,
+          missing
+        )
+      }
+      const m10 = loopCandidates(trail, expansions)
 
-      const graph = buildGraph(trail, expansions, views, config)
-      for (let si = 0; si < scenarios.length; si++) {
-        const scenario = scenarios[si]
-        const layout =
-          scenario === 'walk'
-            ? walkLayout(trail, expansions, views, config)
-            : settleLayout(graph, config, trail, expansions, views)
-        const scene = describeScene(graph, layout, trail, expansions, labelAspect)
-        // 到着時の共通ワード強調の対象(M9)。強調が off のプリセットでも、同じ件数の枠で数える
-        scene.arrival = arrivalHighlightSet(trail, expansions, config.arrivalSharedMax, config)
+      for (const { name, config } of group) {
+        const pi = named.findIndex((n) => n.name === name)
+        onProgress(`${head} ${name}`)
+        // ステータス行を描き直す機会を作る(配置の計算は同期で数百ミリ秒かかる)
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        for (let vi = 0; vi < viewportKeys.length; vi++) {
-          const vpKey = viewportKeys[vi]
-          const result = measureViewport({ route, trail, views, missing, name, config, layout, scene, vpKey })
-          result.scenario = scenario
-          runs.push({ order: [ri, si, vi, pi], result })
+        const graph = buildGraph(trail, expansions, views, config)
+        for (let si = 0; si < scenarios.length; si++) {
+          const scenario = scenarios[si]
+          const layout =
+            scenario === 'walk'
+              ? walkLayout(trail, expansions, views, config)
+              : settleLayout(graph, config, trail, expansions, views)
+          const scene = describeScene(graph, layout, trail, expansions, labelAspect)
+          // 到着時の共通ワード強調の対象(M9)。強調が off のプリセットでも、同じ件数の枠で数える
+          scene.arrival = arrivalHighlightSet(trail, expansions, config.arrivalSharedMax, config)
+
+          for (let vi = 0; vi < viewportKeys.length; vi++) {
+            const vpKey = viewportKeys[vi]
+            const result = measureViewport({ route, trail, views, missing, name, config, layout, scene, vpKey })
+            result.scenario = scenario
+            // 順位付けに効く値のまとまり。differentRanking が true の実行では、まとまりごとに顔ぶれが違う
+            result.ranking = { key: rankingKey, differentRanking }
+            result.M10 = m10
+            runs.push({ order: [ri, si, vi, pi], result })
+          }
         }
       }
     }
@@ -255,6 +270,7 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
       scenarios,
       overrides: options.overrides || null,
       data: options.data ? 'given' : 'wikipedia',
+      allowDifferentRanking: !!options.allowDifferentRanking,
     },
     rules: {
       views: MEASURE_VIEWS,
@@ -279,6 +295,66 @@ async function loadLabelFonts() {
     await document.fonts.ready
   } catch {
     // 読めなくても測れる(代替書体の幅になる)。表示も同じ代替書体になるので、比べる上では揃っている
+  }
+}
+
+/** 順位付けに効く値(neighborLimit・重み・seed)を1つの文字列にする */
+export function rankingKeyOf(config) {
+  return RANKING_KEYS.map((k) => `${k}=${config[k]}`).join(' ')
+}
+
+/** 順位付けに効く値ごとにまとめる(並びは最初に現れた順) */
+export function groupByRanking(named) {
+  const groups = new Map()
+  for (const n of named) {
+    const key = rankingKeyOf(n.config)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(n)
+  }
+  return Array.from(groups.values())
+}
+
+/**
+ * 保存した展開結果を、変種の neighborLimit に合わせて先頭から切り詰める(タスク09)。
+ * 抽選は同じ乱数列から1件ずつ順に引くので(wikipedia.js の pickLinks)、同じ重み・同じ種なら
+ * 件数を減らした展開結果は、多い件数の展開結果の先頭と完全に同じになる。
+ * そのため切り詰めてよいのは、重みと種が保存したときと同じで、件数が保存した件数以下のときだけ
+ * (保存したときの設定は、最初のプリセットと同じとみなす)
+ */
+export function truncatedExpansions(given, config, reference, allow) {
+  const expansions = new Map(Object.entries(given.expansions))
+  if (!allow) return expansions
+  for (const k of ['wMorelike', 'wMutual', 'wLead', 'seed']) {
+    if (config[k] !== reference[k]) {
+      throw new Error(`[measure] 保存した展開結果では、${k} が違う変種は比べられません(件数だけ違う変種を切り詰めて比べる)`)
+    }
+  }
+  const out = new Map()
+  for (const [title, links] of expansions) {
+    if (config.neighborLimit > links.length && links.length >= reference.neighborLimit) {
+      throw new Error(`[measure] 保存した展開結果は ${links.length} 件です。neighborLimit ${config.neighborLimit} には足りません`)
+    }
+    out.set(title, links.slice(0, config.neighborLimit))
+  }
+  return out
+}
+
+/**
+ * M10 輪を閉じられる候補の数(タスク09。10 の演出の起きやすさの目安)。
+ * 経路の各時点(3件目以降)で、今の中心の子のうち、2つ以上前に通った記事の数
+ * @returns {{perStep:{at:string, count:number, titles:string[]}[], total:number, max:number}}
+ */
+export function loopCandidates(trail, expansions) {
+  const perStep = []
+  for (let k = 2; k < trail.length; k++) {
+    const earlier = new Set(trail.slice(0, k - 1))
+    const titles = (expansions.get(trail[k]) || []).map((l) => l.title).filter((t) => earlier.has(t))
+    perStep.push({ at: trail[k], count: titles.length, titles })
+  }
+  return {
+    perStep,
+    total: perStep.reduce((sum, p) => sum + p.count, 0),
+    max: perStep.reduce((m, p) => Math.max(m, p.count), 0),
   }
 }
 
@@ -745,6 +821,10 @@ export function toMarkdown(result) {
 
   lines.push(`測定日時: ${result.date} / 周回視点 ${result.rules.views} / 上位・下位 ${result.rules.topN} 件`)
   lines.push('')
+  if (rows.some((r) => r.ranking && r.ranking.differentRanking)) {
+    lines.push('**顔ぶれが違う比較**: 順位付けに効く値(neighborLimit など)が違う変種を、同じ種で展開し直して比べている')
+    lines.push('')
+  }
   lines.push('### 要約(初期視点 / 周回の平均 / 周回の最悪)')
   lines.push('')
   table(
@@ -784,6 +864,31 @@ export function toMarkdown(result) {
         c.prevOnScreen === null ? '—' : c.prevOnScreen ? '○' : '×',
         fmt(c.moveRatio, 2),
       ]
+    })
+  )
+
+  // 経路とプリセットごとに1回だけ(M10 と段階は場面・画面によらない)
+  const once = rows.filter((r, i) => rows.findIndex((q) => q.route === r.route && q.preset === r.preset) === i)
+  if (once.some((r) => r.M10 && r.M10.perStep.length > 0)) {
+    lines.push('### M10 輪を閉じられる候補の数(経路の各時点で、今の中心の子のうち2つ以上前に通った記事の数)')
+    lines.push('')
+    table(
+      ['経路', 'プリセット', '合計', '最大', '各時点(3件目から)'],
+      once
+        .filter((r) => r.M10 && r.M10.perStep.length > 0)
+        .map((r) => [r.route, r.preset, String(r.M10.total), String(r.M10.max), r.M10.perStep.map((p) => p.count).join(' / ')])
+    )
+  }
+
+  lines.push('### 共通ワードの段階の分布(経路の隣り合う中心の組の数)')
+  lines.push('')
+  const presetNames = [...new Set(rows.map((r) => r.preset))]
+  table(
+    ['プリセット', '組の数', 'none(0)', 'few(1〜3)', 'mid(4〜7)', 'many(8〜)', '共通ワードの件数'],
+    presetNames.map((p) => {
+      const pairs = once.filter((r) => r.preset === p).flatMap((r) => r.centers)
+      const count = (t) => String(pairs.filter((c) => c.tier === t).length)
+      return [p, String(pairs.length), count('none'), count('few'), count('mid'), count('many'), pairs.map((c) => c.shared).join(', ')]
     })
   )
 
