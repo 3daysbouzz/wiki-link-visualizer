@@ -1,0 +1,706 @@
+{
+ "current/work": {
+  "restore": 910.5738768150931,
+  "search": 752.8946116144419,
+  "steps": 418,
+  "positions": "b4e2b95a2ad4c40af86c92fe27ae1fa5923e5e7ddd1089ad88d9756b0f1ccb74",
+  "walkSteps": 418,
+  "walkPositions": "61040269e9eb57123e5b8eb7f2dcd7aa4f733aa46484388b5722505968919587"
+ },
+ "current/voice": {
+  "restore": 988.5169677138721,
+  "search": 753.4317272865866,
+  "steps": 418,
+  "positions": "1d84d98aba43d06b1e9180229178f108baa1ae224ba0fb533f962d09cb0d74b0",
+  "walkSteps": 418,
+  "walkPositions": "a8c213dae62e8876d3c2490390ebd96b3751836a67d7bcc421b7c7c802f48c09"
+ },
+ "current/coffee": {
+  "restore": 974.8227654623926,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "99fa1224d857efdcd72becaccc1f909a60b395bfc5d2f622dbe2dbe9a9dd0b3d",
+  "walkSteps": 418,
+  "walkPositions": "f862599807fcd31065b28cf4152a62fe7c149c9bd106df7a6f89dc65ee3ebd39"
+ },
+ "current/none-air": {
+  "restore": 1006.0125821314763,
+  "search": 727.4331203781918,
+  "steps": 418,
+  "positions": "2c021c08d98a8d5b9ffcd82524a103459acf9a49449063f3a0e85e79b0e4aabd",
+  "walkSteps": 418,
+  "walkPositions": "da7d0eed4cd2ff159c096d6d9a6f7b8f1c5750f9f52eae976755a4fdc08ddd78"
+ },
+ "current/none-choco": {
+  "restore": 967.9593790857006,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "d04fcd2cca947516387e69344f48206bd43d0746f9afbadaa9480a48dcec937b",
+  "walkSteps": 418,
+  "walkPositions": "6543a6947fc69310fc0861cf9eb0333e4c1903d7d08283418aaf0684bcaa5614"
+ },
+ "current/few-fair": {
+  "restore": 882.2552991696733,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "d941cdda8e1f7af36321d8811b22475738c006fa0dfb049279cd0b698f74b188",
+  "walkSteps": 418,
+  "walkPositions": "4341ba86f0333cb45040a7bca2a08fc0de2ba02258049ddd3649e3a6b3151695"
+ },
+ "current/mid-photo": {
+  "restore": 936.8449616856199,
+  "search": 739.8389848992024,
+  "steps": 418,
+  "positions": "95c35d290d7dff3a544a6e28930e8fd2e6e199c9b3925f56ea0339784868d392",
+  "walkSteps": 418,
+  "walkPositions": "e8a36c9f8d9552f4b07e3448b09a41d82f2f84dab8650a9847cfefb544bd0807"
+ },
+ "current/many-tsuina": {
+  "restore": 912.7895322211178,
+  "search": 751.9510776291247,
+  "steps": 418,
+  "positions": "198f77336700840b1c67eba510f81467b3b585b7d61c5c46a37956772907bff5",
+  "walkSteps": 418,
+  "walkPositions": "11c226908df58a85c5878adb222109bd8eba000add653b3aac6ac434b2280d41"
+ },
+ "current/many-american": {
+  "restore": 911.2789806598123,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "35ed688eb8e515799905032c279ebfe8b81a63f4778da20062e9c0ad9ce21a40",
+  "walkSteps": 418,
+  "walkPositions": "c952cd62ce1a7ffd359fae2ee3aed3640a7793f99dfc15dd4e08e48367c53b78"
+ },
+ "current/science": {
+  "restore": 928.471020684943,
+  "search": 727.4331203781918,
+  "steps": 418,
+  "positions": "890df34d2896a8f9a27b7474103d5a9555f37cd8db31e37d810ed9e1db52a15f",
+  "walkSteps": 418,
+  "walkPositions": "2e99dc8f96f5f4bfd3820c25684c2d115c2b537242e9ff3e1ca677ed8d92548f"
+ },
+ "current/few-fuji": {
+  "restore": 970.0387865269165,
+  "search": 755.5344324887214,
+  "steps": 418,
+  "positions": "80c3639adc84be5152cb0f9d3c5d598c010d26039fccfdfb22a125979aac3ac1",
+  "walkSteps": 418,
+  "walkPositions": "3bd0d705dca8b18dc59bad1629bb0fe9365206e386d529912d95c2a2e6a2be1c"
+ },
+ "current/mid-shogi": {
+  "restore": 927.889090916387,
+  "search": 748.8456803713776,
+  "steps": 418,
+  "positions": "beab0abd19d6dfa3086a04bac4bed5b1a3e8fdb6eedb70e253288bbd874fe0c7",
+  "walkSteps": 418,
+  "walkPositions": "ef2342ed68c40ba24d9a647f283727f3a8360b1447a6633a2e794166c24450e2"
+ },
+ "current/walk-top-初音ミク": {
+  "restore": 938.4456620698893,
+  "search": 748.4027266683264,
+  "steps": 418,
+  "positions": "c18b4dc2ae2fd6cc416e62a8431838d388f450182e617818c444c08dfbae0c19",
+  "walkSteps": 418,
+  "walkPositions": "0e68e43e9b0449fc9368abd6d42678bf87fa001a947257ddcdb8cdb6a6e0d880"
+ },
+ "current/walk-top-流体力学": {
+  "restore": 931.4531941158743,
+  "search": 734.5342757876142,
+  "steps": 418,
+  "positions": "087a03d0c346e01870ead7f396af748de092a982bc1c6730c350d69506b4c763",
+  "walkSteps": 418,
+  "walkPositions": "f7ac9b0e13f10c253ed1d979c9090d84afabc07be87a2cf448514d6d5735b7d3"
+ },
+ "current/walk-top-綾波レイ": {
+  "restore": 917.2191681947827,
+  "search": 755.7131866242443,
+  "steps": 418,
+  "positions": "bb3c42055fed85d800d3e87bf7626815df225ec2a7e2074fb4ff525731eb806e",
+  "walkSteps": 418,
+  "walkPositions": "995d5998ac629f77fb323a4c25721c62d2e53d0096da0e87a09a137576f5b2ec"
+ },
+ "current/walk-top-コーヒー": {
+  "restore": 892.631236606532,
+  "search": 731.0079595245829,
+  "steps": 418,
+  "positions": "3c5e494d51de543cda254a37137fb84b2868a68065eaac21fbac6b516c266b7f",
+  "walkSteps": 418,
+  "walkPositions": "caac14e727ad2b585fa59b4f00697bb6650f36cbbc17467069cbe851c93b0bf5"
+ },
+ "current/walk-top-富士山": {
+  "restore": 1033.4505220913213,
+  "search": 743.7142224787733,
+  "steps": 418,
+  "positions": "2857fdc91124c606ee976e7018042b80c1a24ee36d5e44b4f6f5f8d1b19db05a",
+  "walkSteps": 418,
+  "walkPositions": "df56b45f3060d5483a78240a4e580e5acf8a8395515ba81d7f891869db4181a0"
+ },
+ "current/walk-draw-初音ミク": {
+  "restore": 924.7002423806312,
+  "search": 748.4027266683264,
+  "steps": 418,
+  "positions": "3c1211f44ee0ab2005fda22772d454fe08769fc0fa61dd0a63409dcb5338dc99",
+  "walkSteps": 418,
+  "walkPositions": "47d5d77f36b83825b5c129f1dc4e2fd90241c95ac73331f09db9b82d3ce754a8"
+ },
+ "current/walk-draw-流体力学": {
+  "restore": 925.3812694936069,
+  "search": 734.5342757876142,
+  "steps": 418,
+  "positions": "3fc76e8868564aad5520efa5e80f1c96702d6b5827a704cac8ba29823e840418",
+  "walkSteps": 418,
+  "walkPositions": "92a55588547a50505558c88325728d0a9689fcbe10421b8f4901610baf6bcc4d"
+ },
+ "current/walk-draw-綾波レイ": {
+  "restore": 961.8904090875515,
+  "search": 755.7131866242443,
+  "steps": 418,
+  "positions": "5c123f9382d7009de2604b565b7024c415fefbd84770c0b81ffcfe82a929be2a",
+  "walkSteps": 418,
+  "walkPositions": "2955e6220d6ca26dde6edc46d545b8c7b91f008526ebd109ae3f7135eb004ab6"
+ },
+ "current/walk-draw-コーヒー": {
+  "restore": 929.385322879189,
+  "search": 731.0079595245829,
+  "steps": 418,
+  "positions": "b97d55815a335d502c9b54501b05cbd283e1220960fc71dd5dd24a68ed1541ec",
+  "walkSteps": 418,
+  "walkPositions": "5e7909203248e67899c27ec62c4ac136654cf2e62db310a8e831319bf55d8555"
+ },
+ "current/walk-draw-富士山": {
+  "restore": 967.1436162309523,
+  "search": 743.7142224787733,
+  "steps": 418,
+  "positions": "829aaf29c105c25b5562af46bee51763dbf34ba0756c1cf901212f9e97f6b254",
+  "walkSteps": 418,
+  "walkPositions": "4ca674f7f2dfa18b190f64d072d7f15af4fb4a01860ea9529ae7307c0bd8e3b8"
+ },
+ "rev2/work": {
+  "restore": 910.5738768150931,
+  "search": 752.8946116144419,
+  "steps": 418,
+  "positions": "b4e2b95a2ad4c40af86c92fe27ae1fa5923e5e7ddd1089ad88d9756b0f1ccb74",
+  "walkSteps": 418,
+  "walkPositions": "61040269e9eb57123e5b8eb7f2dcd7aa4f733aa46484388b5722505968919587"
+ },
+ "rev2/voice": {
+  "restore": 988.5169677138721,
+  "search": 753.4317272865866,
+  "steps": 418,
+  "positions": "1d84d98aba43d06b1e9180229178f108baa1ae224ba0fb533f962d09cb0d74b0",
+  "walkSteps": 418,
+  "walkPositions": "a8c213dae62e8876d3c2490390ebd96b3751836a67d7bcc421b7c7c802f48c09"
+ },
+ "rev2/coffee": {
+  "restore": 974.8227654623926,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "99fa1224d857efdcd72becaccc1f909a60b395bfc5d2f622dbe2dbe9a9dd0b3d",
+  "walkSteps": 418,
+  "walkPositions": "f862599807fcd31065b28cf4152a62fe7c149c9bd106df7a6f89dc65ee3ebd39"
+ },
+ "rev2/none-air": {
+  "restore": 1006.0125821314763,
+  "search": 727.4331203781918,
+  "steps": 418,
+  "positions": "2c021c08d98a8d5b9ffcd82524a103459acf9a49449063f3a0e85e79b0e4aabd",
+  "walkSteps": 418,
+  "walkPositions": "da7d0eed4cd2ff159c096d6d9a6f7b8f1c5750f9f52eae976755a4fdc08ddd78"
+ },
+ "rev2/none-choco": {
+  "restore": 967.9593790857006,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "d04fcd2cca947516387e69344f48206bd43d0746f9afbadaa9480a48dcec937b",
+  "walkSteps": 418,
+  "walkPositions": "6543a6947fc69310fc0861cf9eb0333e4c1903d7d08283418aaf0684bcaa5614"
+ },
+ "rev2/few-fair": {
+  "restore": 882.2552991696733,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "d941cdda8e1f7af36321d8811b22475738c006fa0dfb049279cd0b698f74b188",
+  "walkSteps": 418,
+  "walkPositions": "4341ba86f0333cb45040a7bca2a08fc0de2ba02258049ddd3649e3a6b3151695"
+ },
+ "rev2/mid-photo": {
+  "restore": 936.8449616856199,
+  "search": 739.8389848992024,
+  "steps": 418,
+  "positions": "95c35d290d7dff3a544a6e28930e8fd2e6e199c9b3925f56ea0339784868d392",
+  "walkSteps": 418,
+  "walkPositions": "e8a36c9f8d9552f4b07e3448b09a41d82f2f84dab8650a9847cfefb544bd0807"
+ },
+ "rev2/many-tsuina": {
+  "restore": 912.7895322211178,
+  "search": 751.9510776291247,
+  "steps": 418,
+  "positions": "198f77336700840b1c67eba510f81467b3b585b7d61c5c46a37956772907bff5",
+  "walkSteps": 418,
+  "walkPositions": "11c226908df58a85c5878adb222109bd8eba000add653b3aac6ac434b2280d41"
+ },
+ "rev2/many-american": {
+  "restore": 911.2789806598123,
+  "search": 749.4137839811492,
+  "steps": 418,
+  "positions": "35ed688eb8e515799905032c279ebfe8b81a63f4778da20062e9c0ad9ce21a40",
+  "walkSteps": 418,
+  "walkPositions": "c952cd62ce1a7ffd359fae2ee3aed3640a7793f99dfc15dd4e08e48367c53b78"
+ },
+ "rev2/science": {
+  "restore": 928.471020684943,
+  "search": 727.4331203781918,
+  "steps": 418,
+  "positions": "890df34d2896a8f9a27b7474103d5a9555f37cd8db31e37d810ed9e1db52a15f",
+  "walkSteps": 418,
+  "walkPositions": "2e99dc8f96f5f4bfd3820c25684c2d115c2b537242e9ff3e1ca677ed8d92548f"
+ },
+ "rev2/few-fuji": {
+  "restore": 970.0387865269165,
+  "search": 755.5344324887214,
+  "steps": 418,
+  "positions": "80c3639adc84be5152cb0f9d3c5d598c010d26039fccfdfb22a125979aac3ac1",
+  "walkSteps": 418,
+  "walkPositions": "3bd0d705dca8b18dc59bad1629bb0fe9365206e386d529912d95c2a2e6a2be1c"
+ },
+ "rev2/mid-shogi": {
+  "restore": 927.889090916387,
+  "search": 748.8456803713776,
+  "steps": 418,
+  "positions": "beab0abd19d6dfa3086a04bac4bed5b1a3e8fdb6eedb70e253288bbd874fe0c7",
+  "walkSteps": 418,
+  "walkPositions": "ef2342ed68c40ba24d9a647f283727f3a8360b1447a6633a2e794166c24450e2"
+ },
+ "rev2/walk-top-初音ミク": {
+  "restore": 938.4456620698893,
+  "search": 748.4027266683264,
+  "steps": 418,
+  "positions": "c18b4dc2ae2fd6cc416e62a8431838d388f450182e617818c444c08dfbae0c19",
+  "walkSteps": 418,
+  "walkPositions": "0e68e43e9b0449fc9368abd6d42678bf87fa001a947257ddcdb8cdb6a6e0d880"
+ },
+ "rev2/walk-top-流体力学": {
+  "restore": 931.4531941158743,
+  "search": 734.5342757876142,
+  "steps": 418,
+  "positions": "087a03d0c346e01870ead7f396af748de092a982bc1c6730c350d69506b4c763",
+  "walkSteps": 418,
+  "walkPositions": "f7ac9b0e13f10c253ed1d979c9090d84afabc07be87a2cf448514d6d5735b7d3"
+ },
+ "rev2/walk-top-綾波レイ": {
+  "restore": 917.2191681947827,
+  "search": 755.7131866242443,
+  "steps": 418,
+  "positions": "bb3c42055fed85d800d3e87bf7626815df225ec2a7e2074fb4ff525731eb806e",
+  "walkSteps": 418,
+  "walkPositions": "995d5998ac629f77fb323a4c25721c62d2e53d0096da0e87a09a137576f5b2ec"
+ },
+ "rev2/walk-top-コーヒー": {
+  "restore": 892.631236606532,
+  "search": 731.0079595245829,
+  "steps": 418,
+  "positions": "3c5e494d51de543cda254a37137fb84b2868a68065eaac21fbac6b516c266b7f",
+  "walkSteps": 418,
+  "walkPositions": "caac14e727ad2b585fa59b4f00697bb6650f36cbbc17467069cbe851c93b0bf5"
+ },
+ "rev2/walk-top-富士山": {
+  "restore": 1033.4505220913213,
+  "search": 743.7142224787733,
+  "steps": 418,
+  "positions": "2857fdc91124c606ee976e7018042b80c1a24ee36d5e44b4f6f5f8d1b19db05a",
+  "walkSteps": 418,
+  "walkPositions": "df56b45f3060d5483a78240a4e580e5acf8a8395515ba81d7f891869db4181a0"
+ },
+ "rev2/walk-draw-初音ミク": {
+  "restore": 924.7002423806312,
+  "search": 748.4027266683264,
+  "steps": 418,
+  "positions": "3c1211f44ee0ab2005fda22772d454fe08769fc0fa61dd0a63409dcb5338dc99",
+  "walkSteps": 418,
+  "walkPositions": "47d5d77f36b83825b5c129f1dc4e2fd90241c95ac73331f09db9b82d3ce754a8"
+ },
+ "rev2/walk-draw-流体力学": {
+  "restore": 925.3812694936069,
+  "search": 734.5342757876142,
+  "steps": 418,
+  "positions": "3fc76e8868564aad5520efa5e80f1c96702d6b5827a704cac8ba29823e840418",
+  "walkSteps": 418,
+  "walkPositions": "92a55588547a50505558c88325728d0a9689fcbe10421b8f4901610baf6bcc4d"
+ },
+ "rev2/walk-draw-綾波レイ": {
+  "restore": 961.8904090875515,
+  "search": 755.7131866242443,
+  "steps": 418,
+  "positions": "5c123f9382d7009de2604b565b7024c415fefbd84770c0b81ffcfe82a929be2a",
+  "walkSteps": 418,
+  "walkPositions": "2955e6220d6ca26dde6edc46d545b8c7b91f008526ebd109ae3f7135eb004ab6"
+ },
+ "rev2/walk-draw-コーヒー": {
+  "restore": 929.385322879189,
+  "search": 731.0079595245829,
+  "steps": 418,
+  "positions": "b97d55815a335d502c9b54501b05cbd283e1220960fc71dd5dd24a68ed1541ec",
+  "walkSteps": 418,
+  "walkPositions": "5e7909203248e67899c27ec62c4ac136654cf2e62db310a8e831319bf55d8555"
+ },
+ "rev2/walk-draw-富士山": {
+  "restore": 967.1436162309523,
+  "search": 743.7142224787733,
+  "steps": 418,
+  "positions": "829aaf29c105c25b5562af46bee51763dbf34ba0756c1cf901212f9e97f6b254",
+  "walkSteps": 418,
+  "walkPositions": "4ca674f7f2dfa18b190f64d072d7f15af4fb4a01860ea9529ae7307c0bd8e3b8"
+ },
+ "rev3/work": {
+  "restore": 912.6474244690669,
+  "search": 762.9455119869441,
+  "steps": 418,
+  "positions": "c39a55194bec86ec32672380ecf9e1abcea93860cf279db7724d84cbdef8e33e",
+  "walkSteps": 418,
+  "walkPositions": "96fcd31ef89cfa195734d8bbac7b1c03266b9e23a3281ea0ea51ce06768d052a"
+ },
+ "rev3/voice": {
+  "restore": 998.7597319894893,
+  "search": 761.876919251265,
+  "steps": 418,
+  "positions": "d4fe4969d226754a17c5c20b34d458bab1df0344bdf18c0e4520a878d9d3f49e",
+  "walkSteps": 418,
+  "walkPositions": "5b9fbce2995a15dca3ffb6447eeb5b8356b759ec9bcebd11cc0236db745c711a"
+ },
+ "rev3/coffee": {
+  "restore": 980.8896584255489,
+  "search": 755.138164542271,
+  "steps": 418,
+  "positions": "9f22727a275dff31fe855bef371fe83bb72f7d541554a5f7bf456bbda059ff77",
+  "walkSteps": 418,
+  "walkPositions": "8ad8cca35888a8cf529e1e8a2464f82ac84c859f924be8624fe1579e08319e6e"
+ },
+ "rev3/none-air": {
+  "restore": 996.8739710358136,
+  "search": 717.189497303666,
+  "steps": 418,
+  "positions": "bc73b2bd19b948cc4caa5d32fdd6e6c3783d1861e59fbec18e7bfc0a5684ad46",
+  "walkSteps": 418,
+  "walkPositions": "f81796dfb7c635ad14b87086a801e9724c0a6010b8d6e82d4de32dd4600c0764"
+ },
+ "rev3/none-choco": {
+  "restore": 971.7638379346477,
+  "search": 755.138164542271,
+  "steps": 418,
+  "positions": "6876ec78b3a96c9be375c765a1de2df4dbc5b55c18f915549136d852076489cd",
+  "walkSteps": 418,
+  "walkPositions": "c0aef2651d5c2c6e25e577feb4ee0b74f3190078f78b520fa6833c97c85a47e2"
+ },
+ "rev3/few-fair": {
+  "restore": 880.0198946890936,
+  "search": 755.138164542271,
+  "steps": 418,
+  "positions": "0568adb66b299a2cbb9cae2a43c948457056188695df52d27d8a09f95743bdab",
+  "walkSteps": 418,
+  "walkPositions": "5b9097aceb938f6d2e4ef08b13e5d00fa06a6f1bc696b1d63744c7bc0863f45a"
+ },
+ "rev3/mid-photo": {
+  "restore": 938.8082824394882,
+  "search": 755.7727577767324,
+  "steps": 418,
+  "positions": "97de357526c29f1320fa1fd9bcbec7c5c61730017b636cd2ba5929fe1e29543a",
+  "walkSteps": 418,
+  "walkPositions": "f68f78f150d1d3bbaf8afef1987926df2caaa355d8bc2c60eb920a3a859b35e1"
+ },
+ "rev3/many-tsuina": {
+  "restore": 922.1384659979761,
+  "search": 750.951409955825,
+  "steps": 418,
+  "positions": "79b429d41eb22866c4e7eab8cec20c341dc957d6c3d6385a980e99ac75b8d9ef",
+  "walkSteps": 418,
+  "walkPositions": "913adcd7835013c092effbdc33f9fb72f86457ee5ac958f764cea1cf92eae8f9"
+ },
+ "rev3/many-american": {
+  "restore": 909.844318706617,
+  "search": 755.138164542271,
+  "steps": 418,
+  "positions": "a45db011d1fa5797e0bb9680c551edff2ea47dc3167844aad7d71817733c0e24",
+  "walkSteps": 418,
+  "walkPositions": "0ca9e87dd0450f7705838dee29690b0259c647eb2db2b1310050b3cd74804d0b"
+ },
+ "rev3/science": {
+  "restore": 924.8448863371474,
+  "search": 717.189497303666,
+  "steps": 418,
+  "positions": "784de417e80520ce851dff68a99b7bbfc33f86c1a858c6db81302e1ffbd2d8a5",
+  "walkSteps": 418,
+  "walkPositions": "cb3bb85460d2b9583f3a9a335b9aa7931ba16c966c7b07cbdb6f8267a910220c"
+ },
+ "rev3/few-fuji": {
+  "restore": 972.3322544490386,
+  "search": 757.571368791166,
+  "steps": 418,
+  "positions": "fcf44bb8ad97a7eaedae6df22b10df9372440fe722ce526677881fe11905393a",
+  "walkSteps": 418,
+  "walkPositions": "f632bb79c81064119ade4f21c045b17985b248ac56dbe76f06b9033c066c5d69"
+ },
+ "rev3/mid-shogi": {
+  "restore": 942.7708440894329,
+  "search": 741.2023210613636,
+  "steps": 418,
+  "positions": "8bae3b70d0c685fa5dff834715c78bb32148782646658fb9543c27a8e0509855",
+  "walkSteps": 418,
+  "walkPositions": "add7436de583aa86a3a69a76fe62f465d104b71897fa6cbd36560d357a5b48b0"
+ },
+ "rev3/walk-top-初音ミク": {
+  "restore": 948.8185557311372,
+  "search": 760.0078133124326,
+  "steps": 418,
+  "positions": "300a276c378fd070fdb2d34997da49c32bd70945aac6675abec62257b9b29551",
+  "walkSteps": 418,
+  "walkPositions": "f70915a7b3d325584f5cd671c186eece7eaf51fae7571907ab3ec481bfbc7b4f"
+ },
+ "rev3/walk-top-流体力学": {
+  "restore": 942.9299815505633,
+  "search": 731.5570995389958,
+  "steps": 418,
+  "positions": "59c24c17e21d0ccc889b74a600e1293b44d0bbffa32782e03fee80ade979bfad",
+  "walkSteps": 418,
+  "walkPositions": "b518bfdc91ef0332024eea7d997fddc175dd6e970ff1be7a64832aacbb995573"
+ },
+ "rev3/walk-top-綾波レイ": {
+  "restore": 916.4928670441865,
+  "search": 766.981328180342,
+  "steps": 418,
+  "positions": "fd0d105ad094f649483af384f3914458d6cf356ad4c5a5f96f171afae29d15d7",
+  "walkSteps": 418,
+  "walkPositions": "e9420f205fb1c7f65d8dd7d558d52933ca26a649d83eb3559d1b709c56240d3c"
+ },
+ "rev3/walk-top-コーヒー": {
+  "restore": 894.6510143261206,
+  "search": 752.3028482934443,
+  "steps": 418,
+  "positions": "27133c0734acb661bb94ecadb042fe3c6a141823affaa6df1c0c8f58e5b726d6",
+  "walkSteps": 418,
+  "walkPositions": "a692bf07ba33426331833bd18c80b884f6c7e29a03e57bb9a096fdc9c0c4973b"
+ },
+ "rev3/walk-top-富士山": {
+  "restore": 1036.9465104750252,
+  "search": 749.6199246957793,
+  "steps": 418,
+  "positions": "0b636a49b1d1e0e56f08fc121bd839b0847582dcb8798362c80897cd2341db03",
+  "walkSteps": 418,
+  "walkPositions": "4e0f1a25aed61902b7906613420287566fc5481fdcc48bcc8be49b9789811db2"
+ },
+ "rev3/walk-draw-初音ミク": {
+  "restore": 934.9328312384447,
+  "search": 760.0078133124326,
+  "steps": 418,
+  "positions": "21badd15eaf96be6d7a8eded10efb4fa3cb69bcc2845e1b29a528fe09af731f9",
+  "walkSteps": 418,
+  "walkPositions": "d9c545acec3e57a8f4167455e63d28288af0ccbc734c5f883060b1963573014d"
+ },
+ "rev3/walk-draw-流体力学": {
+  "restore": 921.5657899573661,
+  "search": 731.5570995389958,
+  "steps": 418,
+  "positions": "f85938d7f72552ad85e693f0d2ce3c69cd00547bdc3d13a91b82a5745bed9806",
+  "walkSteps": 418,
+  "walkPositions": "964132e96ab4e36b242a6e681be42592e4dd7ce624b2774ff6e3c5baeceff80f"
+ },
+ "rev3/walk-draw-綾波レイ": {
+  "restore": 971.860769256149,
+  "search": 766.981328180342,
+  "steps": 418,
+  "positions": "dde51ab6d751a66bfb783701f73b49b9b2dfb35bdc72b6fc27c449b82b059822",
+  "walkSteps": 418,
+  "walkPositions": "d9cbbe4055db2f75f5c3bdd8eaa83d6584b50b8a6722e35da41b4ec8a3ce7bc4"
+ },
+ "rev3/walk-draw-コーヒー": {
+  "restore": 930.5720980117063,
+  "search": 752.3028482934443,
+  "steps": 418,
+  "positions": "95d0ff0daadbcbec9489f15e9769531e7f44d07b64ef3ef54c0274cc0ef1698a",
+  "walkSteps": 418,
+  "walkPositions": "88a8f976829b4980b4d0b06018bea213f4a6b9d4b6368b5869f4d155f681f2ce"
+ },
+ "rev3/walk-draw-富士山": {
+  "restore": 974.750530834691,
+  "search": 749.6199246957793,
+  "steps": 418,
+  "positions": "43bacf49455f05540d42bc51e606bad126b995f0799c123e22a94884d71a3904",
+  "walkSteps": 418,
+  "walkPositions": "6198ed7522271d9f4c9d54076dd4ad3c774346635e7c227275685645b38834ab"
+ },
+ "rev4/work": {
+  "restore": 498.2509151514065,
+  "search": 462.57347763578997,
+  "steps": 418,
+  "positions": "a94b65573fa287bbb698a7c5a7674e01298bf340de9ebf567e17454b12f31afb",
+  "walkSteps": 418,
+  "walkPositions": "b985c6006a0228d9e1366a5137bfa40da38d73e5743d1f6590678435ee0c7082"
+ },
+ "rev4/voice": {
+  "restore": 556.409113055011,
+  "search": 466.55343013348767,
+  "steps": 418,
+  "positions": "b38cb2681bb6f92ab645148a2bf0350c8513d9679562398c93496a5d82021986",
+  "walkSteps": 418,
+  "walkPositions": "ebb91001ee7f46de3990305768a6cd6f451e07a50b1c741e5d59b7d06164b163"
+ },
+ "rev4/coffee": {
+  "restore": 539.1493476967808,
+  "search": 467.05800939006014,
+  "steps": 418,
+  "positions": "93cf4ae69cc4a2a1b8f5c70c6297732ab2a0ee7850047142d54e26b8b060ad0d",
+  "walkSteps": 418,
+  "walkPositions": "200462f51c9b9960c5f628ef76a38834974a361ec6633325c03d1eb64c510d1e"
+ },
+ "rev4/none-air": {
+  "restore": 553.229382400585,
+  "search": 466.1594144388791,
+  "steps": 418,
+  "positions": "249f3043abc7f86fa90d328e456371b8a46168c6477942976aca5e0ba964e44c",
+  "walkSteps": 418,
+  "walkPositions": "ca52b4ea0c9de65862ff54448461f4198e43a398c7c587d299dad2bb94c34a2f"
+ },
+ "rev4/none-choco": {
+  "restore": 562.7969798590439,
+  "search": 467.05800939006014,
+  "steps": 418,
+  "positions": "67b9eb06346f7ff0bc6c4ecf39426a36442296c283c0d4b607a97ad58e71e373",
+  "walkSteps": 418,
+  "walkPositions": "d61b8cc57b195956d9a1a033dc5b2850541e905607b21185c9924177e0984219"
+ },
+ "rev4/few-fair": {
+  "restore": 518.6168463605363,
+  "search": 467.05800939006014,
+  "steps": 418,
+  "positions": "5fe85434c9a096ca0b29e2c0c9b534c05f824d396423e887847c251c06bba478",
+  "walkSteps": 418,
+  "walkPositions": "3c89e97c0833c255a1f5b478d464633796d4c8f0c5e96c8b5cf327e35ba42479"
+ },
+ "rev4/mid-photo": {
+  "restore": 549.7250937085428,
+  "search": 474.89976047145734,
+  "steps": 418,
+  "positions": "38260ece877f687ed1045b7dfb8a027af9bacc3a2a93a884f412179bac67f1d9",
+  "walkSteps": 418,
+  "walkPositions": "cf9fdaa720f7cf2b4506ff8ea195d42850a5af5e7d62806286bf96cb688809ce"
+ },
+ "rev4/many-tsuina": {
+  "restore": 579.5495008062278,
+  "search": 476.8184131166023,
+  "steps": 418,
+  "positions": "20121c7b6416a259736ab3b4a3eb04307f5f3c9665c4ab177fa0170f1ef8ea76",
+  "walkSteps": 418,
+  "walkPositions": "17f064c63fd87eb5d663702539b6a880b4252c8caf7f3689d74b6e5561660505"
+ },
+ "rev4/many-american": {
+  "restore": 551.8950072255136,
+  "search": 467.05800939006014,
+  "steps": 418,
+  "positions": "6487fe1abeab0b5cfe1811edeef09cf741dca7d4be38a535bbd144bb39cc75dd",
+  "walkSteps": 418,
+  "walkPositions": "bdab7b1ff0df08f5a90a2a3b9c674098bf9b743b5075914e72c95bb0c5aad8ef"
+ },
+ "rev4/science": {
+  "restore": 561.7137330366627,
+  "search": 466.1594144388791,
+  "steps": 418,
+  "positions": "d5ebcdbb34b96131b26a6e9246327742b5d2aafb474a4db148892e1e7d9b87ec",
+  "walkSteps": 418,
+  "walkPositions": "d0ea0b63173be48befbf1503828ec580e26d3f36f1fc27a560e715ca7aa58ffa"
+ },
+ "rev4/few-fuji": {
+  "restore": 650.5757835517679,
+  "search": 456.4157718008781,
+  "steps": 418,
+  "positions": "69e4de61043a6c1cc236681b4e6f6183f6bbf739f61202cfeb49a73f2aac453c",
+  "walkSteps": 418,
+  "walkPositions": "91ae6b64457e3fe88974adb595e05cf044e28899527913dc8daf48f49d0f0a74"
+ },
+ "rev4/mid-shogi": {
+  "restore": 565.9497974266014,
+  "search": 465.1348213695016,
+  "steps": 418,
+  "positions": "8d7ab161241b97548481859e2a456d3d8b7e66ddd36ea54fea1b72e9e1fd5270",
+  "walkSteps": 418,
+  "walkPositions": "ff02c4feabd4503aa4de5e217d826b150518b3c2fdc4f53a2ac29da59b722dcd"
+ },
+ "rev4/walk-top-初音ミク": {
+  "restore": 604.2346886885546,
+  "search": 458.03959783263895,
+  "steps": 418,
+  "positions": "e164ea19377d3e56e3c1750bb2e0db984e06faa1bf70e462f4cd6e2ea2ea2eeb",
+  "walkSteps": 418,
+  "walkPositions": "7a6690c9633eb453d24d4b72ebae46e9d14e92c53ad3302957af701850aa9545"
+ },
+ "rev4/walk-top-流体力学": {
+  "restore": 539.9619191824471,
+  "search": 455.3983508601423,
+  "steps": 418,
+  "positions": "f5c3defd0c15a14248daf5d4a6c4ce840b02c1ee84b1b11de486776e25d3022c",
+  "walkSteps": 418,
+  "walkPositions": "5417f637a0295ecd8c725879059eae6be1544094b9078a48e979792be2ad5244"
+ },
+ "rev4/walk-top-綾波レイ": {
+  "restore": 548.3852628886649,
+  "search": 448.6581520439867,
+  "steps": 418,
+  "positions": "61471e771a852b13646fa88c6ad737b00179d5b1df27c7a1140f884e88fe0d03",
+  "walkSteps": 418,
+  "walkPositions": "54e5236ed38060a0679563de30be9e35d9dad043a61ccb337bcb0660c696e33c"
+ },
+ "rev4/walk-top-コーヒー": {
+  "restore": 517.1755810316025,
+  "search": 463.5501309491527,
+  "steps": 418,
+  "positions": "e5b6f2a8c77054089c16b1467b2af7499ba3d82b0bb707b257f2fd58b11c764e",
+  "walkSteps": 418,
+  "walkPositions": "91731256fa2089ef53e09565c5b509d332390328248868140c784a2756d52a26"
+ },
+ "rev4/walk-top-富士山": {
+  "restore": 522.6166192809909,
+  "search": 463.9407418334939,
+  "steps": 418,
+  "positions": "7fa7ba2a7b7e3526f8f04af76e64e866a02cbe91d10a970f8942fda73170fca4",
+  "walkSteps": 418,
+  "walkPositions": "603a33765fe95d7258d0e747e7a33438130c9ba3aeea2912e61f87357c7893bb"
+ },
+ "rev4/walk-draw-初音ミク": {
+  "restore": 563.3408552661095,
+  "search": 458.03959783263895,
+  "steps": 418,
+  "positions": "75827129fe88da99ec3a85cae7f37f55e0218aa02e42ad87e87915508e4d08e3",
+  "walkSteps": 418,
+  "walkPositions": "e65521d7fccdf5ffd5fe8ccd128e791c56da73fdaae52023c28ae16bf30148b9"
+ },
+ "rev4/walk-draw-流体力学": {
+  "restore": 512.2300012578216,
+  "search": 455.3983508601423,
+  "steps": 418,
+  "positions": "c95f461448427396a5d7b94290775ded1cde41a65d004b5c36c0767e72cac64f",
+  "walkSteps": 418,
+  "walkPositions": "26b3b3089393e9b0e71c79db020179f1cc98160c854c10885093fb2568d804ec"
+ },
+ "rev4/walk-draw-綾波レイ": {
+  "restore": 570.8873222168876,
+  "search": 448.6581520439867,
+  "steps": 418,
+  "positions": "8aa787051b9f0ad67dfab4d3ce9bc7f799deb1d96c37954c61484295c4828dab",
+  "walkSteps": 418,
+  "walkPositions": "1de5221344873396ab6c12d401267189fc405ca8abefef06f27ed3e4d1a5884a"
+ },
+ "rev4/walk-draw-コーヒー": {
+  "restore": 536.7460919244431,
+  "search": 463.5501309491527,
+  "steps": 418,
+  "positions": "e3e31e5a2d60afd6b97e31614d87fc235fe0e87124d4d0ffb7a28ec9f2103af1",
+  "walkSteps": 418,
+  "walkPositions": "3dc84cd0550ae5cb303054aff8785e5ca094b018ee8e0f454c3f22c369c79258"
+ },
+ "rev4/walk-draw-富士山": {
+  "restore": 533.2325695244373,
+  "search": 463.9407418334939,
+  "steps": 418,
+  "positions": "6e1c94e1797f3ae83981793e5b1c9dce1bbb8e823c139a39c93f7e22b802dc77",
+  "walkSteps": 418,
+  "walkPositions": "c71f59151ed8d984da8fdd14b390f4b8a8cd1d887cd7abb26b09bd984bca070a"
+ }
+}

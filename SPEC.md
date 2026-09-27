@@ -212,6 +212,23 @@ m ∈ [0,1]・mutual/lead ∈ {0,1} なので、重みを変えても 0〜1 に�
 morelike と一致するリンク先が `GUARANTEED_TOP` 件に満たない場合
 (短い記事・特殊な記事)は Console に警告を出す。
 
+**表示件数(`neighborLimit`。タスク09)**: 1記事から出すのは、並べ替えた上位 `GUARANTEED_TOP`(10)件の確定枠と、
+残りを抽選で埋める枠(3.5)の合計 `neighborLimit` 件。既定の rev5 は **24件**(確定枠 10 + 抽選の枠 14)、
+current・rev2・rev3・rev4・mesh は従来どおり(mesh 以外は 40件)。
+判断しやすさに最も素直に効くのは選択肢そのものを減らすことなので、07・08 の見せ方を入れた rev4 を土台に
+n40・n30・n24 を同じ `measure()` の実行で比べて決めた(12.5。測定は `docs/tasks/09-report-measure.md`)。
+
+| 変種(rev4 が土台) | phone の M5 / M6(初期) | M3 読める件数 phone(初期) | 段階の分布 none/few/mid/many(53組) | M10 輪の候補(長い経路10本) |
+|---|---|---|---|---|
+| n40 | 13.9 / 114.6 | 2.9 | 4 / 10 / 14 / 25 | 30(9/10 経路) |
+| n30 | 10.1 / 64.1 | 3.2 | 4 / 15 / 17 / 17 | 26(9/10 経路) |
+| **n24(rev5)** | **7.6 / 39.5** | **3.9** | **5 / 21 / 13 / 14** | **23(8/10 経路)** |
+
+- 確定枠は 10 のまま(当たり前の道を残す役目は件数によらない)。11位以降の記事は追加表示(6.8)でまとめて出せる
+- 中心同士の距離の段階の境目(3件・7件。6.9)は変えていない。件数に合わせて縮めた案(n24 で 2件・4件)は、
+  かえって many に偏った(5 / 17 / 7 / 24)
+- 輪を閉じられる候補(M10。タスク10 の演出の起きやすさの目安)は減るが、なくならない
+
 ### 3.4 除外フィルタと閲覧数
 
 **除外: 日付・年の記事**(どの記事からもリンクされていてノイズになる)
@@ -237,7 +254,7 @@ morelike と一致するリンク先が `GUARANTEED_TOP` 件に満たない場�
 エンドポイント:
 `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/ja.wikipedia/all-access/user/{記事名}/daily/{開始日}/{終了日}`
 
-- 1記事=1リクエスト。**表示するノード(中心+抽選で選んだ40件)の分だけ**取る。
+- 1記事=1リクエスト。**表示するノード(中心 + `neighborLimit` 件。rev5 は24件)の分だけ**取る。
   加えて、追加表示(6.8)で次に出す `moreBatch` 件を先読みする
 - 集計は1日遅れで確定するので、終了日は昨日。そこから `PAGEVIEW_DAYS` 日分さかのぼる
 - 記事名は空白を `_` にしてから `encodeURIComponent` する
@@ -342,7 +359,8 @@ morelike と一致するリンク先が `GUARANTEED_TOP` 件に満たない場�
 
 | 定数 | 初期値 | 意味 |
 |---|---|---|
-| `MAX_LINKS` | 40 | 1記事から展開するノード数 |
+| `MAX_LINKS` | 40 | 1記事から展開するノード数(旧。今は VizConfig の `neighborLimit` を使う) |
+| `REV5_NEIGHBOR_LIMIT` | 24 | 既定の rev5 で1記事から展開する件数(3.3。タスク09) |
 | `POOL_SIZE` | 150 | 抽選の母集団にする候補数(3.5) |
 | `GUARANTEED_TOP` | 10 | 抽選せず必ず出す上位件数(3.5) |
 | `SAMPLE_BIAS` | 10 | 抽選の重みの効き方。大きいほど平坦=よりランダム(3.5) |
@@ -1246,13 +1264,14 @@ leva のスライダーの端と URL の丸めに同じ値を使う(パネルと
 `constants.js` に置くだけで VizConfig には出さない。配置の好みではなく
 安定性(発散の歯止め)やフレーム処理に効く値で、触ると環境ごとに結果が変わるため。
 
-プリセット: `rev2`(**既定**。current に関連スコアの加点とラベルの深さフェードを足したもの。それ以外の値は current と同じ)、
+プリセット: `rev5`(**既定**。タスク09。rev4 に表示件数 `neighborLimit` 24 を足したもの。それ以外の値は rev4 と同じ。3.3)、
+`rev2`(タスク09 までの既定。current に関連スコアの加点とラベルの深さフェードを足したもの。それ以外の値は current と同じ)、
 `current`(従来の見た目と順位。回帰確認用に**削除しない**)、`mesh`(ネットワーク向け。Phase 1 以降で本領。重みは rev2 と同じ)、
 `rev3`(rev2 + 関連の強さ(6.9)を on。それ以外の値は rev2 と同じ。06 の基準値として残す)、
 `rev4`(rev3 から共通ワードのパケットを off、子の距離を使わず、中心同士の距離を段階に、到着時の強調を on。6.9・6.10)。
-rev3・rev4 は調整段階なので既定にはしない。
+rev2・rev3・rev4 は比べるために残す(rev4 は rev5 と表示件数だけが違う)。
 相互リンクの脈動の項目(`mutualEmphasis` など)はタスク07 で外した。古い URL に付いていても無視する。
-URL に `preset` が無いときは `rev2` になる。従来と比べるときは `?preset=current` を付ける。
+URL に `preset` が無いときは `rev5` になる(タスク09 までは `rev2`)。従来と比べるときは `?preset=current` を付ける。
 **`current` の値は `constants.js` の既定値と完全に一致させること。** ずれると比較の土台が壊れる
 (`tests/urlState.test.js` で一致を検査している)。
 
@@ -1267,6 +1286,17 @@ URL に `preset` が無いときは `rev2` になる。従来と比べるとき�
 ```
 
 2つのタブで別プリセット・同じ経路を開いて並べて比較する、が狙い。
+
+**`preset` の無い URL と既定の切り替え(タスク09)**: 歩いたときに URL へ書くのは `start` と `path` だけで
+(`writeTrailToUrl`)、`preset` はデバッグパネルで設定を変えたときにしか書かない(`writeConfigToUrl`)。
+そのため、公開サイトで歩いて共有された URL は、ほぼすべて `preset` を持たない。既定を rev2 から rev5 に替えたので、
+そうした URL は rev5 で開く。
+
+- 経路はそのまま復元できる。`path` の記事を1件ずつ取り直すだけで、前の記事の子に含まれているかは見ないため、
+  前の記事の25〜40件目だった記事へ進んだ URL でも壊れない(中心同士の線は常に引く。7章)
+- 見た目は変わる: 子が24件になり(顔ぶれは 40件のときの先頭24件と同じ。3.5 の抽選の性質)、中心同士の距離の段階・
+  最初のカメラ距離(`cameraFit` d)・到着時の強調が rev4 と同じになる
+- 共有したときと同じ見た目で開きたいときは、URL に `&preset=rev2` を足す
 
 ### 12.4 デバッグパネル(`leva`)
 
@@ -1289,7 +1319,7 @@ await window.__viz.measure({ routes: ['work'], viewports: ['pc'] })
 copy(window.__viz.measureMarkdown())                          直前の結果を Markdown で(レポート用)
 ```
 
-`options` はすべて省略可: `routes`(経路の key)・`presets`(既定 `['rev2', 'rev3', 'rev4']`)・`viewports`(既定 `['pc', 'phone']`)・
+`options` はすべて省略可: `routes`(経路の key)・`presets`(既定 `['rev2', 'rev3', 'rev4']`。既定の rev5 は表示件数が違うので含めない。rev5 と比べるときは下の `allowDifferentRanking` を使う)・`viewports`(既定 `['pc', 'phone']`)・
 `overrides`(プリセットごとの値の上書き。下の「開発用: 値を試す」)。`routes` には組の名前(`'default'` 既定・`'tiers'`・`'all'`)も渡せる。
 測っている間はステータス行に進み具合(`MEASURE 2/3 science rev3` など)を出す。全部で十数秒かかる。
 
@@ -1328,6 +1358,11 @@ await window.__viz.measure({ data, routes: 'walks', presets: ['rev4'], allowDiff
   { name: 'n30', base: 'rev4', overrides: { neighborLimit: 30 } },
   { name: 'n24', base: 'rev4', overrides: { neighborLimit: 24 } },
 ] })
+```
+
+```
+// 既定の rev5 と、表示件数だけが違う rev4 を並べる(rev5 は上の n24 と同じ値)
+await window.__viz.measure({ data, routes: 'tiers', presets: ['rev4', 'rev5'], allowDifferentRanking: true })
 ```
 
 - `allowDifferentRanking: true` のときだけ、順位付けに効く値(`neighborLimit`・重み・`seed`)が違う変種も比べられる。

@@ -51,6 +51,7 @@ import {
   ARRIVAL_SHARED_MAX,
   CAMERA_FIT,
   CAMERA_FIT_MODES,
+  REV5_NEIGHBOR_LIMIT,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -321,7 +322,7 @@ PRESETS.rev3 = {
  *     極端に差をつけると中心付近が混むため
  *   - 中心同士の距離は、相互リンクを使わず共通ワードの件数の段階で決める(trailTiered)
  *   - 最初のカメラ距離は、全体ではなく今の中心と確定枠の子(関連スコアの上位)が入る距離(cameraFit 'd'。タスク08)
- * rev3 は 06 の基準値として残す(2026-09-26 利用者と合意)。既定にはせず ?preset=rev4 で確かめる
+ * rev3 は 06 の基準値として残す(2026-09-26 利用者と合意)。既定はこれに表示件数の見直しを足した rev5(タスク09)
  */
 PRESETS.rev4 = {
   ...PRESETS.rev3,
@@ -333,9 +334,21 @@ PRESETS.rev4 = {
   cameraFit: 'd',
 }
 
-// 何も指定しないときのプリセット。rev2 の改善を既定にし、
-// current は ?preset=current で従来の見た目と比べるために残す
-export const DEFAULT_PRESET = 'rev2'
+/**
+ * rev5 = 08 を終えた rev4 に、表示件数を 24 に減らしたもの(タスク09)。既定のプリセット。
+ *   - neighborLimit 24(確定枠 GUARANTEED_TOP 10 + 抽選の枠 14)。理由は constants.js の REV5_NEIGHBOR_LIMIT
+ *   - 中心同士の距離の段階の境目は rev4 と同じ(3件・7件)
+ * 判断しやすさに最も素直に効くのは、選択肢そのものを減らすこと(07 の議論)
+ */
+PRESETS.rev5 = {
+  ...PRESETS.rev4,
+  neighborLimit: REV5_NEIGHBOR_LIMIT,
+}
+
+// 何も指定しないときのプリセット。詰めの段階の区切りとして rev2 から rev5 に切り替えた(タスク09。2026-09-26 利用者と合意)。
+// current・rev2・rev3・rev4 は ?preset= で比べるために残す。
+// ?preset= の無い URL(公開サイトで歩いて共有した URL はすべてこれ)は、切り替え後は rev5 で開く(SPEC 12.3)
+export const DEFAULT_PRESET = 'rev5'
 
 /**
  * 数値項目の範囲。leva のスライダーの端にもそのまま使う。

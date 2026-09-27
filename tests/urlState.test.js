@@ -54,15 +54,15 @@ describe('readUrlState', () => {
     assert.equal(s.presetName, 'mesh')
   })
 
-  test('不明なプリセットは既定(rev2)にフォールバックする', () => {
+  test('不明なプリセットは既定(rev5。タスク09)にフォールバックする', () => {
     const s = readUrlState('?preset=nope')
-    assert.equal(DEFAULT_PRESET, 'rev2')
-    assert.equal(s.presetName, 'rev2')
-    assert.deepEqual(s.config, PRESETS.rev2)
+    assert.equal(DEFAULT_PRESET, 'rev5')
+    assert.equal(s.presetName, 'rev5')
+    assert.deepEqual(s.config, PRESETS.rev5)
   })
 
-  test('プリセット指定なしなら rev2、?preset=current で従来の設定', () => {
-    assert.equal(readUrlState('').presetName, 'rev2')
+  test('プリセット指定なしなら rev5、?preset=current で従来の設定', () => {
+    assert.equal(readUrlState('').presetName, 'rev5')
     assert.deepEqual(readUrlState('?preset=current').config, PRESETS.current)
   })
 
