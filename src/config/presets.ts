@@ -49,6 +49,8 @@ import {
   ARRIVAL_SHARED_MS,
   ARRIVAL_SHARED_FADE_MS,
   ARRIVAL_SHARED_MAX,
+  CAMERA_FIT,
+  CAMERA_FIT_MODES,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -101,6 +103,8 @@ export interface VizConfig {
   fadeStart: number
   /** 見えなくなる深さの差 */
   fadeEnd: number
+  /** 最初のカメラ距離の決め方(SPEC 4章)。'all' = 全体が入る(従来)。a〜d は今の中心の周りを基準にする */
+  cameraFit: string
 
   // --- 関連リンクの順位付け(ranking) -----------------------------------
   // 変更は次に展開する記事から効く(記憶済みの展開結果は変えない)。SPEC 3.3
@@ -229,6 +233,7 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    cameraFit: CAMERA_FIT,
     labelDepthFade: LABEL_DEPTH_FADE,
     fadeStart: LABEL_FADE_START,
     fadeEnd: LABEL_FADE_END,
@@ -260,6 +265,7 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    cameraFit: CAMERA_FIT,
     ...REV2_LABELS,
     ...REV2_RANKING,
     moreBatch: MORE_BATCH,
@@ -286,6 +292,7 @@ export const PRESETS: Record<string, VizConfig> = {
     edgePrimaryOpacity: EDGE_PRIMARY_OPACITY,
     edgeWeakOpacity: EDGE_WEAK_OPACITY,
     followLerp: FOLLOW_LERP,
+    cameraFit: CAMERA_FIT,
     ...REV2_LABELS,
     ...REV2_RANKING,
     moreBatch: MORE_BATCH,
@@ -313,6 +320,7 @@ PRESETS.rev3 = {
  *   - 子の距離は使わない(子の線はすべて springLength)。3D では差がほとんど読み取れず、
  *     極端に差をつけると中心付近が混むため
  *   - 中心同士の距離は、相互リンクを使わず共通ワードの件数の段階で決める(trailTiered)
+ *   - 最初のカメラ距離は、全体ではなく今の中心と確定枠の子(関連スコアの上位)が入る距離(cameraFit 'd'。タスク08)
  * rev3 は 06 の基準値として残す(2026-09-26 利用者と合意)。既定にはせず ?preset=rev4 で確かめる
  */
 PRESETS.rev4 = {
@@ -322,6 +330,7 @@ PRESETS.rev4 = {
   childSpringMin: SPRING_LENGTH,
   childSpringMax: SPRING_LENGTH,
   trailTiered: true,
+  cameraFit: 'd',
 }
 
 // 何も指定しないときのプリセット。rev2 の改善を既定にし、
@@ -445,6 +454,8 @@ export const VISUAL_KEYS = [
   'labelDepthFade',
   'fadeStart',
   'fadeEnd',
+  // 最初のカメラ距離の決め方(タスク08)。配置には効かず、次に検索・復元したときのカメラにだけ効く
+  'cameraFit',
   // 関連の強さのうち見た目だけに効くもの(SPEC 6.9)
   'sharedPackets',
   'sharedPacketPx',
@@ -564,6 +575,7 @@ export function coerceConfig(
     labelDepthFade: bool(raw.labelDepthFade, base.labelDepthFade),
     fadeStart: float(raw.fadeStart, base.fadeStart, r.fadeStart.min, r.fadeStart.max),
     fadeEnd: float(raw.fadeEnd, base.fadeEnd, r.fadeEnd.min, r.fadeEnd.max),
+    cameraFit: oneOf(raw.cameraFit, CAMERA_FIT_MODES, base.cameraFit),
 
     wMorelike: float(raw.wMorelike, base.wMorelike, r.wMorelike.min, r.wMorelike.max),
     wMutual: float(raw.wMutual, base.wMutual, r.wMutual.min, r.wMutual.max),

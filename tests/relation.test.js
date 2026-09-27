@@ -448,8 +448,8 @@ describe('到着時の強調を始めるか(startsArrival)', () => {
 })
 
 describe('プリセット rev4(タスク07)', () => {
-  test('rev3 から sharedPackets・arrivalShared・子の距離・trailTiered だけが違う', () => {
-    const DIFF = ['sharedPackets', 'arrivalShared', 'childSpringMin', 'childSpringMax', 'trailTiered']
+  test('rev3 から sharedPackets・arrivalShared・子の距離・trailTiered・cameraFit(タスク08)だけが違う', () => {
+    const DIFF = ['sharedPackets', 'arrivalShared', 'childSpringMin', 'childSpringMax', 'trailTiered', 'cameraFit']
     for (const [key, v] of Object.entries(PRESETS.rev3)) {
       if (DIFF.includes(key)) continue
       assert.equal(PRESETS.rev4[key], v, `${key} が rev3 と違う`)
@@ -458,6 +458,7 @@ describe('プリセット rev4(タスク07)', () => {
     assert.equal(PRESETS.rev4.arrivalShared, true)
     assert.equal(PRESETS.rev4.trailTiered, true)
     assert.equal(PRESETS.rev4.distanceByScore, true)
+    assert.equal(PRESETS.rev4.cameraFit, 'd')
   })
 
   test('current・rev2・mesh・rev3 は到着時の強調と段階が off', () => {

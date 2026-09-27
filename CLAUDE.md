@@ -85,6 +85,7 @@ tests/                        node:test のユニットテスト(API のエラ�
 `screenProjection.js`(画面への投影・測定用の視点)・`nodeStyle.js`(階層と球の大きさ)は Graph3D.jsx から切り出したもので、
 **表示(Graph3D)と画面上の見え方の測定(SPEC 12.5)が同じ関数を呼ぶ。** 測定側に計算を写さないこと
 (表示を調整しても測定に反映されず、数字だけがずれていく)。`screenMetrics.js` は測定の小さな計算。
+`cameraFit.js`(最初のカメラ距離の決め方。SPEC 4章)も表示と測定が同じ関数を呼ぶ。
 
 `index.html` で Google Fonts(Space Grotesk / JetBrains Mono)を `<link>` で読む。
 これは npm 依存ではないので上の「依存を増やさない」には抵触しない。
@@ -184,7 +185,8 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 
 見せ方を変える改善の前後は `?debug=1` の `await window.__viz.measure()` で、rev2・rev3・rev4 を同じ条件の
 画面上の数字(M1〜M9)で比べる。値を試すときは `measure({ overrides: { rev4: {...} } })`
-(開発用の道具。使い方は SPEC 12.5 の「開発用: 値を試す」)。中心同士の距離の段階は `measure({ routes: 'tiers', presets: ['rev4'] })`。基準値は `docs/tasks/06-report-baseline.md`、項目と決まりは SPEC 12.5。
+(開発用の道具。使い方は SPEC 12.5 の「開発用: 値を試す」)。中心同士の距離の段階は `measure({ routes: 'tiers', presets: ['rev4'] })`。
+候補の比較は `variants`、Wikipedia の変化に左右されない比較は保存した展開結果(`data`)で行う(SPEC 12.5)。基準値は `docs/tasks/06-report-baseline.md`、項目と決まりは SPEC 12.5。
 `[measure] …閲覧数を取れなかった記事が…` の警告が出た回は、数字が再現しないことがあるので測り直す。
 
 ## 説明のしかた

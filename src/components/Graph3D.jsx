@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { seededRandom } from '../utils/prng.js'
 import { depthFadeOf, approach, smoothstep } from '../utils/depthFade.js'
-import { stepForces, spawnScatter, fitCamera } from '../utils/forceLayout.js'
+import { stepForces, spawnScatter } from '../utils/forceLayout.js'
+import { cameraFitFor } from '../utils/cameraFit.js'
 import { projectToScreen, viewDepth } from '../utils/screenProjection.js'
 import {
   selectLabels,
@@ -67,8 +68,6 @@ import {
   CAMERA_NEAR,
   CAMERA_FAR,
   CAMERA_START_DISTANCE,
-  FIT_PADDING,
-  FIT_MIN_RADIUS,
   LABEL_SWAP_S,
   LABEL_SWAP_RISE_PX,
 } from '../constants.js'
@@ -977,13 +976,14 @@ const Graph3D = forwardRef(function Graph3D(
     },
 
     /** グラフ全体が収まるようカメラを引く */
-    zoomToFit(duration = 700, padding = FIT_PADDING) {
+    zoomToFit(duration = 700) {
       const ctx = ctxRef.current
       if (!ctx || ctx.nodes.size === 0) return
       ctx.followId = null
 
-      // 距離の式は画面上の見え方の測定(SPEC 12.5)と共有する
-      const fit = fitCamera(ctx.nodes.values(), ctx.camera.fov, padding, FIT_MIN_RADIUS)
+      // 何を画面に入れるかは cameraFit で決まる(SPEC 4章。'all' は全体、a〜d は今の中心の周り)。
+      // 距離の決め方は画面上の見え方の測定(SPEC 12.5)と共有する
+      const fit = cameraFitFor(ctx.nodes, ctx.links, ctx.currentId, ctx.visual.cameraFit)
       const center = new THREE.Vector3(fit.center.x, fit.center.y, fit.center.z)
       const distance = fit.distance
 

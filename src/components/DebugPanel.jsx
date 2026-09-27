@@ -1,6 +1,7 @@
 import React from 'react'
 import { Leva, useControls, folder } from 'leva'
 import { PRESETS, RANGES } from '../config/presets.ts'
+import { CAMERA_FIT_MODES } from '../constants.js'
 
 /**
  * 表示パラメータ(VizConfig)をその場で切り替えるデバッグパネル。
@@ -114,6 +115,14 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
           },
           fadeStart: slider('fadeStart', 'fadeStart', '薄くし始める深さの差'),
           fadeEnd: slider('fadeEnd', 'fadeEnd', '見えなくなる深さの差'),
+          // 最初のカメラ距離の決め方(SPEC 4章)。次に検索・URL から開き直したときに効く
+          cameraFit: {
+            value: config.cameraFit,
+            options: CAMERA_FIT_MODES,
+            label: 'cameraFit',
+            hint: 'all=全体 / a=中心と子 / b=a+前の中心(上限あり) / c=a+前の中心(端に入るときだけ) / d=中心と上位の子',
+            onChange: fromPanelOnly((v) => onChange({ cameraFit: v })),
+          },
         },
         { collapsed: false }
       ),

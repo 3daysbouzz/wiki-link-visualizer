@@ -274,6 +274,18 @@ export const FIT_MIN_RADIUS = 40
 // 画面上の見え方の測定(SPEC 12.5)は、この待ち時間を 60 ステップ/秒で換算したステップ数の配置で距離を求める
 export const INITIAL_FIT_DELAY_MS = 900
 export const INITIAL_FOLLOW_DELAY_MS = 1700
+// 最初のカメラ距離の決め方(VizConfig の cameraFit。SPEC 4章。タスク08)
+// 'all' は従来の「全体が入る」距離。current・rev2・rev3 はこれ。
+// rev4 は 'd'(今の中心と確定枠 GUARANTEED_TOP 件の子が入る距離)。12経路 × 復元・歩く × pc・phone で候補 a〜d を比べ、
+// 完了条件をすべて満たした a・c・d のうち、phone の混み具合(M5・M6)がいちばん小さく、移動ごとの距離の比も
+// いちばん小さかった(1.43)ため。前の中心が画面に入る割合は a・c・d で同じ(46/48)。
+// d は遠くに飛んだ子に引っ張られない(子が1件でも遠いと a はそれに合わせて引いてしまう)
+export const CAMERA_FIT = 'all'
+export const CAMERA_FIT_MODES = ['all', 'a', 'b', 'c', 'd']
+// cameraFit 'b'(前の中心も入れる)で、今の中心の周りの範囲の何倍まで広げてよいか(上限)
+export const CAMERA_FIT_PREV_CAP = 1.5
+// cameraFit 'c'(前の中心が端に収まるときだけ入れる)で、今の中心の周りの範囲の何倍以内なら入れるか
+export const CAMERA_FIT_PREV_EDGE = 1.2
 
 // --- 検索オートコンプリート・パンくず -------------------------------------
 // 入力が止まってから候補を取りに行くまでの待ち(ms)と候補数

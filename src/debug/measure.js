@@ -23,7 +23,8 @@ import {
   arrivalHighlightSet,
   trailTier,
 } from '../utils/relation.js'
-import { buildSim, settleSim, fitCamera } from '../utils/forceLayout.js'
+import { buildSim, settleSim } from '../utils/forceLayout.js'
+import { cameraFitFor } from '../utils/cameraFit.js'
 import {
   projectToScreen,
   isOnScreen,
@@ -60,10 +61,9 @@ import { BENCH_ROUTES, routeKeysOf } from './benchRoutes.js'
 import {
   SIM_STEPS_PER_SEC,
   CAMERA_FOV,
-  FIT_PADDING,
-  FIT_MIN_RADIUS,
   INITIAL_FIT_DELAY_MS,
   HIT_RADIUS_PX,
+  GUARANTEED_TOP,
   LABEL_KEEP_BIAS,
   LABEL_UPDATE_INTERVAL_MS,
   LABEL_PX,
@@ -79,6 +79,7 @@ import {
 // rev2・rev3・rev4 は順位付けの重みが同じなので、同じ展開結果のまま比べられる
 const DEFAULT_PRESETS = ['rev2', 'rev3', 'rev4']
 const DEFAULT_VIEWPORTS = ['pc', 'phone']
+const DEFAULT_SCENARIOS = ['restore', 'walk']
 // 上位・下位として比べる件数(M1・M3)
 const TOP_N = 10
 // 点滅とみなす「消えてから再表示まで」の時間(タスク03 の確認と同じ)
@@ -105,15 +106,25 @@ const WORST_OF = {
 /**
  * 測る。options はすべて省略可(省略時は全部を測る)。
  * overrides はプリセットごとの値の上書き(値の調整を試すとき用。例: { rev4: { trailLenFew: 150 } })。
+ * variants はプリセットを元にした変種(候補の比較用。例: [{ name: 'rev4-d', base: 'rev4', overrides: { cameraFit: 'd' } }])。
+ *   presets のあとに並ぶ。候補ごとにプリセットを増やさずに済む
+ * scenarios はカメラ距離を決める場面(SPEC 12.5)。既定は両方:
+ *   restore … URL から復元した場合。全部を一度に組み、その配置でカメラ距離を決める
+ *   walk    … 検索して手で歩いた場合。最初の記事だけでカメラ距離を決め、その距離のまま経路どおりに1件ずつ進む
+ * data を渡すと Wikipedia に問い合わせず、渡した展開結果で測る(例: tests/fixtures/tier-routes.json)。
+ *   Wikipedia 側の変化の影響を受けないので、候補の比較や回帰に使う。閲覧数は使わない(一次ノードはすべて最小の大きさ)
  * 上書きした値も結果の条件(conditions.config)に残る
- * @param {{routes?:string[]|string, presets?:string[], viewports?:string[], overrides?:Record<string, object>}} [options]
+ * @param {{routes?:string[]|string, presets?:string[], variants?:{name:string, base:string, overrides?:object}[],
+ *   viewports?:string[], scenarios?:string[], overrides?:Record<string, object>, data?:Record<string, {trail:string[], expansions:object}>}} [options]
  * @param {{onProgress?:(text:string|null)=>void}} [hooks] 進み具合(ステータス行に出す文言)
  */
 export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
   // routes は key の配列か、組の名前('default' | 'tiers' | 'all')。既定は 'default'
   const routeKeys = routeKeysOf(options.routes ?? 'default')
   const presetNames = options.presets ?? DEFAULT_PRESETS
+  const variants = options.variants ?? []
   const viewportKeys = options.viewports ?? DEFAULT_VIEWPORTS
+  const scenarios = options.scenarios ?? DEFAULT_SCENARIOS
 
   const routes = routeKeys.map((key) => {
     const route = BENCH_ROUTES.find((r) => r.key === key)
@@ -122,6 +133,12 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
   })
   for (const name of presetNames) {
     if (!PRESETS[name]) throw new Error(`[measure] プリセット ${name} がありません`)
+  }
+  for (const v of variants) {
+    if (!PRESETS[v.base]) throw new Error(`[measure] 変種 ${v.name} の元のプリセット ${v.base} がありません`)
+  }
+  for (const sc of scenarios) {
+    if (!['restore', 'walk'].includes(sc)) throw new Error(`[measure] 場面 ${sc} がありません(restore / walk)`)
   }
   for (const key of viewportKeys) {
     if (!MEASURE_VIEWPORTS[key]) throw new Error(`[measure] 仮想画面 ${key} がありません(MEASURE_VIEWPORTS)`)
@@ -145,17 +162,25 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
     const route = routes[ri]
     const head = `MEASURE ${ri + 1}/${routes.length} ${route.key}`
     // 種は経路のもの。プリセットの seed が違っても同じ展開結果・同じ初期配置で比べる
-    const named = presetNames.map((name) => ({
-      name,
-      config: { ...PRESETS[name], ...(options.overrides?.[name] || {}), seed: route.seed },
-    }))
+    const named = [
+      ...presetNames.map((name) => ({
+        name,
+        config: { ...PRESETS[name], ...(options.overrides?.[name] || {}), seed: route.seed },
+      })),
+      ...variants.map((v) => ({
+        name: v.name,
+        config: { ...PRESETS[v.base], ...(v.overrides || {}), seed: route.seed },
+      })),
+    ]
     assertSameRanking(named)
     const base = named[0].config
 
     // --- 1. 展開(1回だけ。全プリセットで共有する) ---
     onProgress(`${head} 展開中`)
-    const expansions = new Map()
-    const trail = await expandRoute(
+    const given = options.data && options.data[route.key]
+    if (options.data && !given) throw new Error(`[measure] data に経路 ${route.key} の展開結果がありません`)
+    const expansions = given ? new Map(Object.entries(given.expansions)) : new Map()
+    const trail = given ? given.trail : await expandRoute(
       route.start,
       route.path,
       (assumeCanonical) => ({
@@ -172,7 +197,7 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
     // 日によって変わるので、使った値を条件に残す
     onProgress(`${head} 閲覧数`)
     const views = new Map()
-    const titles = buildGraph(trail, expansions, new Map(), base).nodes.map((n) => n.id)
+    const titles = given ? [] : buildGraph(trail, expansions, new Map(), base).nodes.map((n) => n.id)
     await fetchPageviews(titles, (title, v) => views.set(title, v))
     // 取得に失敗した記事はキャッシュされず、次に測ったときに取り直される(= 数字が変わる)。
     // 1回だけ取り直し、それでも欠けたら結果に残して警告する(その回の数字は比べられない)
@@ -197,27 +222,40 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
       await new Promise((resolve) => setTimeout(resolve, 0))
 
       const graph = buildGraph(trail, expansions, views, config)
-      const layout = settleLayout(graph, config)
-      const scene = describeScene(graph, layout, trail, expansions, labelAspect)
-      // 到着時の共通ワード強調の対象(M9)。強調が off のプリセットでも、同じ件数の枠で数える
-      scene.arrival = arrivalHighlightSet(trail, expansions, config.arrivalSharedMax, config)
+      for (let si = 0; si < scenarios.length; si++) {
+        const scenario = scenarios[si]
+        const layout =
+          scenario === 'walk'
+            ? walkLayout(trail, expansions, views, config)
+            : settleLayout(graph, config, trail, expansions, views)
+        const scene = describeScene(graph, layout, trail, expansions, labelAspect)
+        // 到着時の共通ワード強調の対象(M9)。強調が off のプリセットでも、同じ件数の枠で数える
+        scene.arrival = arrivalHighlightSet(trail, expansions, config.arrivalSharedMax, config)
 
-      for (let vi = 0; vi < viewportKeys.length; vi++) {
-        const vpKey = viewportKeys[vi]
-        runs.push({
-          order: [ri, vi, pi],
-          result: measureViewport({ route, trail, views, missing, name, config, layout, scene, vpKey }),
-        })
+        for (let vi = 0; vi < viewportKeys.length; vi++) {
+          const vpKey = viewportKeys[vi]
+          const result = measureViewport({ route, trail, views, missing, name, config, layout, scene, vpKey })
+          result.scenario = scenario
+          runs.push({ order: [ri, si, vi, pi], result })
+        }
       }
     }
   }
   onProgress(null)
 
-  // rev2 と rev3 が上下に並ぶよう、経路 → 仮想画面 → プリセット の順にする
-  runs.sort((a, b) => a.order[0] - b.order[0] || a.order[1] - b.order[1] || a.order[2] - b.order[2])
+  // プリセットが上下に並ぶよう、経路 → 場面 → 仮想画面 → プリセット の順にする
+  runs.sort((a, b) => a.order[0] - b.order[0] || a.order[1] - b.order[1] || a.order[2] - b.order[2] || a.order[3] - b.order[3])
   return {
     date: new Date().toISOString(),
-    options: { routes: routeKeys, presets: presetNames, viewports: viewportKeys, overrides: options.overrides || null },
+    options: {
+      routes: routeKeys,
+      presets: presetNames,
+      variants,
+      viewports: viewportKeys,
+      scenarios,
+      overrides: options.overrides || null,
+      data: options.data ? 'given' : 'wikipedia',
+    },
     rules: {
       views: MEASURE_VIEWS,
       maxSteps: MEASURE_MAX_STEPS,
@@ -244,22 +282,67 @@ async function loadLabelFonts() {
   }
 }
 
+const FIT_STEP = Math.round((INITIAL_FIT_DELAY_MS / 1000) * SIM_STEPS_PER_SEC)
+
 /**
- * 表示と同じ力学で、初期位置から落ち着くまで進める。
- * URL から復元したときと同じく「一度に組んで落ち着かせる」形になる
- * (実際の散歩はクリックのたびに前の配置を引き継ぐので、そこは違う)。
- * 途中の INITIAL_FIT_DELAY_MS 相当のステップで、アプリが最初に全体を収めるときの距離を求める
+ * アプリが最初にカメラ距離を決めるときの距離(INITIAL_FIT_DELAY_MS 相当のステップ目の配置で、表示と同じ cameraFitFor)。
+ * 与えた経路だけで一度に組んで求める(検索なら最初の記事だけ、URL からの復元なら全部)
  */
-function settleLayout(graph, config) {
+function fitDistanceFor(trail, expansions, views, config) {
+  const sim = buildSim(buildGraph(trail, expansions, views, config), config)
+  let fit = null
+  settleSim(sim, FIT_STEP, (n) => {
+    if (n === FIT_STEP) fit = cameraFitFor(sim.nodes, sim.links, trail[trail.length - 1], config.cameraFit)
+  })
+  // FIT_STEP より前に落ち着いた場合は、落ち着いた配置で決める
+  return fit || cameraFitFor(sim.nodes, sim.links, trail[trail.length - 1], config.cameraFit)
+}
+
+/**
+ * 移動ごとのカメラ距離の比(大きい方 ÷ 小さい方)の最大値。
+ * 復元の場面の参考値: 経路の途中までを URL から開いたときの距離を、隣り合う途中どうしで比べる。
+ * (実際のアプリは進む・戻るで距離を変えないので、歩いている間の比は常に 1)
+ */
+function moveRatioFor(trail, expansions, views, config) {
+  const ds = []
+  for (let k = 1; k <= trail.length; k++) ds.push(fitDistanceFor(trail.slice(0, k), expansions, views, config).distance)
+  let worst = 1
+  for (let k = 1; k < ds.length; k++) worst = Math.max(worst, Math.max(ds[k], ds[k - 1]) / Math.min(ds[k], ds[k - 1]))
+  return worst
+}
+
+/**
+ * URL から復元した場合(restore)。表示と同じ力学で、初期位置から落ち着くまで進める。
+ * 全部の記事を展開してから一度に組んで落ち着かせる(実際の散歩はクリックのたびに前の配置を引き継ぐので、そこは違う。walkLayout)。
+ * 途中の INITIAL_FIT_DELAY_MS 相当のステップで、アプリが最初にカメラ距離を決めるときの距離を求める
+ */
+function settleLayout(graph, config, trail, expansions, views) {
   const sim = buildSim(graph, config)
-  const fitStep = Math.round((INITIAL_FIT_DELAY_MS / 1000) * SIM_STEPS_PER_SEC)
+  const currentId = trail[trail.length - 1]
   let fit = null
   const { steps, capped } = settleSim(sim, MEASURE_MAX_STEPS, (n) => {
-    if (n === fitStep) fit = fitCamera(sim.nodes.values(), CAMERA_FOV, FIT_PADDING, FIT_MIN_RADIUS)
+    if (n === FIT_STEP) fit = cameraFitFor(sim.nodes, sim.links, currentId, config.cameraFit)
   })
-  // fitStep より前に落ち着いた場合は、落ち着いた配置で収める
-  if (!fit) fit = fitCamera(sim.nodes.values(), CAMERA_FOV, FIT_PADDING, FIT_MIN_RADIUS)
-  return { nodes: sim.nodes, links: sim.links, steps, capped, fitStep, fit }
+  // FIT_STEP より前に落ち着いた場合は、落ち着いた配置で決める
+  if (!fit) fit = cameraFitFor(sim.nodes, sim.links, currentId, config.cameraFit)
+  const moveRatio = moveRatioFor(trail, expansions, views, config)
+  return { nodes: sim.nodes, links: sim.links, steps, capped, fitStep: FIT_STEP, fit, moveRatio }
+}
+
+/**
+ * 検索して手で歩いた場合(walk)。最初の記事だけのグラフでカメラ距離を決め(検索と同じ)、
+ * そのあと経路どおりに1件ずつ進む(前の配置を引き継ぎ、そのたびに落ち着くまで待ってから次へ進む)。
+ * 進む・戻るではカメラ距離を変えないので、最後まで最初の距離のまま(移動ごとの比は 1)
+ */
+function walkLayout(trail, expansions, views, config) {
+  const fit = fitDistanceFor(trail.slice(0, 1), expansions, views, config)
+  let sim = null
+  let result = null
+  for (let k = 1; k <= trail.length; k++) {
+    sim = buildSim(buildGraph(trail.slice(0, k), expansions, views, config), config, sim)
+    result = settleSim(sim, MEASURE_MAX_STEPS)
+  }
+  return { nodes: sim.nodes, links: sim.links, steps: result.steps, capped: result.capped, fitStep: FIT_STEP, fit, moveRatio: 1 }
 }
 
 /** 各ノードの階層・大きさ・ラベルの寸法と、中心の子(関連スコア順)をまとめる */
@@ -320,6 +403,7 @@ function measureViewport({ route, trail, views, missing, name, config, layout, s
   })
   const camera = makeViewCamera(vp.width, vp.height, at(initialDir), target)
   const initial = evaluateView(camera, vp, vpKey, config, layout, scene)
+  const cameraView = cameraMetrics(camera, vp, layout, scene, trail, distance)
 
   const initialCenters = centerPairs(camera, vp, layout, scene)
   const perView = orbitDirections(MEASURE_VIEWS).map((dir) => {
@@ -351,6 +435,9 @@ function measureViewport({ route, trail, views, missing, name, config, layout, s
       pageviewsMissing: missing,
     },
     M7: { steps: layout.steps, capped: layout.capped },
+    // 最初のカメラ(タスク08): 距離・子が画面に入っている割合・確定枠の子が全部入っているか・
+    // 前後の中心の画面距離・前の中心が画面に入っているか・移動ごとの距離の比の最大値
+    cameraView: roundAll(cameraView),
     // 中心同士の組ごとの共通ワードの件数・段階・狙いの長さ・実際の距離(3D と、初期視点の画面 px)
     centers: roundAll(initialCenters),
     initial: initial.detail,
@@ -360,6 +447,28 @@ function measureViewport({ route, trail, views, missing, name, config, layout, s
       worst: roundAll(worst),
     },
     M8: measureFlicker(vp, config, layout, scene, target, at(initialDir)),
+  }
+}
+
+/** 初期視点での、最初のカメラの見え方(タスク08) */
+function cameraMetrics(camera, vp, layout, scene, trail, distance) {
+  const on = (id) => isOnScreen(projectToScreen(layout.nodes.get(id), camera, vp.width, vp.height), vp.width, vp.height)
+  const children = scene.children
+  const guaranteed = children.slice(0, GUARANTEED_TOP)
+  const prevId = trail.length > 1 ? trail[trail.length - 2] : null
+  let centersPx = null
+  if (prevId) {
+    const a = projectToScreen(layout.nodes.get(prevId), camera, vp.width, vp.height)
+    const b = projectToScreen(layout.nodes.get(scene.currentId), camera, vp.width, vp.height)
+    centersPx = Math.hypot(a.x - b.x, a.y - b.y)
+  }
+  return {
+    distance,
+    childrenOnScreen: children.length ? children.filter((c) => on(c.id)).length / children.length : null,
+    guaranteedOnScreen: on(scene.currentId) && guaranteed.every((c) => on(c.id)),
+    centersPx,
+    prevOnScreen: prevId ? on(prevId) : null,
+    moveRatio: layout.moveRatio,
   }
 }
 
@@ -592,6 +701,7 @@ const fmt = (v, digits = 2) => (v === null || v === undefined ? '—' : Number(v
 export function summaryRows(result) {
   return result.results.map((r) => ({
     route: r.route,
+    scenario: r.scenario,
     viewport: r.viewport,
     preset: r.preset,
     'M1比 初期': r.initial.M1.ratio,
@@ -611,6 +721,12 @@ export function summaryRows(result) {
     'M9 初期': r.initial.M9 ? r.initial.M9.readable : '—',
     'M9 周回平均': r.orbit.mean.m9Readable,
     'M9 最悪': r.orbit.worst.m9Readable,
+    カメラ距離: r.cameraView.distance,
+    '子が画面内': r.cameraView.childrenOnScreen,
+    '確定枠が画面内': r.cameraView.guaranteedOnScreen,
+    '前後の中心 px': r.cameraView.centersPx,
+    '前の中心が画面内': r.cameraView.prevOnScreen,
+    '移動ごとの比': r.cameraView.moveRatio,
   }))
 }
 
@@ -625,14 +741,14 @@ export function toMarkdown(result) {
     for (const b of body) lines.push(`| ${b.join(' | ')} |`)
     lines.push('')
   }
-  const key = (r) => [r.route, r.viewport, r.preset]
+  const key = (r) => [r.route, r.scenario === 'walk' ? '歩く' : '復元', r.viewport, r.preset]
 
   lines.push(`測定日時: ${result.date} / 周回視点 ${result.rules.views} / 上位・下位 ${result.rules.topN} 件`)
   lines.push('')
   lines.push('### 要約(初期視点 / 周回の平均 / 周回の最悪)')
   lines.push('')
   table(
-    ['経路', '画面', 'プリセット', 'M1 比', 'M2 画面', 'M2 3D', 'M3 読める(/10)', 'M5 混み', 'M6 近い組(中心)', 'M7', 'M8', 'M9 共通ワード読める'],
+    ['経路', '場面', '画面', 'プリセット', 'M1 比', 'M2 画面', 'M2 3D', 'M3 読める(/10)', 'M5 混み', 'M6 近い組(中心)', 'M7', 'M8', 'M9 共通ワード読める'],
     rows.map((r) => [
       ...key(r),
       `${fmt(r.initial.M1.ratio)} / ${fmt(r.orbit.mean.m1Ratio)} / ${fmt(r.orbit.worst.m1Ratio)}`,
@@ -649,10 +765,32 @@ export function toMarkdown(result) {
     ])
   )
 
+  lines.push('### 最初のカメラ(初期視点。M5・M6 は 初期視点 / 周回の平均)')
+  lines.push('')
+  table(
+    ['経路', '場面', '画面', 'プリセット', 'カメラ距離', 'M5 混み', 'M6 近い組', 'M9(最悪)', '子が画面内', '確定枠が画面内', '前後の中心 px', '前の中心が画面内', '移動ごとの比'],
+    rows.map((r) => {
+      const c = r.cameraView
+      const touch = r.initial.M6.touchPairs === null ? '' : `・指 ${r.initial.M6.touchPairs}`
+      return [
+        ...key(r),
+        fmt(c.distance, 0),
+        `${r.initial.M5.crowd} / ${fmt(r.orbit.mean.m5Crowd, 1)}`,
+        `${r.initial.M6.pairs}${touch} / ${fmt(r.orbit.mean.m6Pairs, 1)}`,
+        r.initial.M9 ? `${fmt(r.orbit.worst.m9Readable, 0)}/${r.initial.M9.of}` : '—',
+        c.childrenOnScreen === null ? '—' : `${Math.round(c.childrenOnScreen * 100)}%`,
+        c.guaranteedOnScreen ? '○' : '×',
+        c.centersPx === null ? '—' : fmt(c.centersPx, 1),
+        c.prevOnScreen === null ? '—' : c.prevOnScreen ? '○' : '×',
+        fmt(c.moveRatio, 2),
+      ]
+    })
+  )
+
   lines.push('### 中心同士の距離(段階。3D と初期視点の画面 px)')
   lines.push('')
   table(
-    ['経路', '画面', 'プリセット', '組', '共通ワード', '段階', '狙いの長さ', '3D 距離', '画面 px', '両方画面内'],
+    ['経路', '場面', '画面', 'プリセット', '組', '共通ワード', '段階', '狙いの長さ', '3D 距離', '画面 px', '両方画面内'],
     rows.flatMap((r) =>
       r.centers.map((c) => [
         ...key(r),
@@ -670,7 +808,7 @@ export function toMarkdown(result) {
   lines.push('### M1 上位と下位の中心からの距離(初期視点。中央値。画面 px と 3D)')
   lines.push('')
   table(
-    ['経路', '画面', 'プリセット', '子', '上位 px', '下位 px', '比 px', '上位 3D', '下位 3D', '比 3D', '画面外(上位/下位)'],
+    ['経路', '場面', '画面', 'プリセット', '子', '上位 px', '下位 px', '比 px', '上位 3D', '下位 3D', '比 3D', '画面外(上位/下位)'],
     rows.map((r) => {
       const m = r.initial.M1
       return [
@@ -691,7 +829,7 @@ export function toMarkdown(result) {
   lines.push('')
   const reasons = ['shown', 'faint', 'overlap', 'depth', 'offscreen', 'rank', 'hover']
   table(
-    ['経路', '画面', 'プリセット', 'M3 読めない理由(上位10件)', ...reasons.map((x) => `M4 ${x}`)],
+    ['経路', '場面', '画面', 'プリセット', 'M3 読めない理由(上位10件)', ...reasons.map((x) => `M4 ${x}`)],
     rows.map((r) => [
       ...key(r),
       Object.entries(r.initial.M3.notReadable)
@@ -705,7 +843,7 @@ export function toMarkdown(result) {
   lines.push(`### M6 押し間違いの起きやすさ(初期視点。間隔 ${result.rules.hitPairPx}px 未満 / 指 ${result.rules.touchPairPx}px 未満は phone のみ)`)
   lines.push('')
   table(
-    ['経路', '画面', 'プリセット', '画面内のノード', `${result.rules.hitPairPx}px 未満`, 'うち中心を含む', `${result.rules.touchPairPx}px 未満`, 'うち中心を含む'],
+    ['経路', '場面', '画面', 'プリセット', '画面内のノード', `${result.rules.hitPairPx}px 未満`, 'うち中心を含む', `${result.rules.touchPairPx}px 未満`, 'うち中心を含む'],
     rows.map((r) => {
       const m = r.initial.M6
       return [
@@ -722,7 +860,7 @@ export function toMarkdown(result) {
   lines.push('### 条件')
   lines.push('')
   table(
-    ['経路', '画面', 'プリセット', '経路(trail)', '仮想画面', 'カメラ距離', '画角', '距離を求めたステップ', 'M8 選び直し回数', '閲覧数の欠け'],
+    ['経路', '場面', '画面', 'プリセット', '経路(trail)', '仮想画面', 'カメラ距離', '画角', '距離を求めたステップ', 'M8 選び直し回数', '閲覧数の欠け'],
     rows.map((r) => [
       ...key(r),
       r.conditions.trail.join(' → '),
