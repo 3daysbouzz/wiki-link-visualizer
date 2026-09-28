@@ -315,6 +315,11 @@ a:hover {
 .status-line.is-error {
   color: #fff;
 }
+/* 輪を閉じたときのカメラワーク(SPEC 6.11。10b)の一行。端末風の白い文字(色は使わない) */
+.status-line.is-loop {
+  color: #fff;
+  letter-spacing: 2px;
+}
 
 .empty-hint {
   position: absolute;

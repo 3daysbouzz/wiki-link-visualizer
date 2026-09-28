@@ -78,6 +78,11 @@ export default function App() {
         : null
     )
   }, [])
+  // 輪を閉じたときのカメラワーク(SPEC 6.11。10b)の間だけ、画面の隅に出す一行。説明ではなく端末風の記録として出す
+  const [loopBanner, setLoopBanner] = useState(null)
+  const handleLoopChange = useCallback((info) => {
+    setLoopBanner(info && info.cinematic ? `LOOP CLOSED // ${info.length} NODES` : null)
+  }, [])
   const noticeTimer = useRef(null)
   // 操作説明は初めてグラフを出したときだけ出す
   const hintShownRef = useRef(false)
@@ -583,7 +588,7 @@ export default function App() {
         },
         // 輪を閉じたときの演出(SPEC 6.11)を、今の画面で長さ n の輪として試す(3〜9)。
         // 経路の末尾 n 件(足りなければ今の中心の子で補う)を輪に見立てる。グラフに無い線は試すときだけ描く。
-        // 実際の輪ではないので、演出の後に戻る処理はしない
+        // 実際の輪ではないので、演出の後に経路は切らない(今の中心へカメラを戻すだけ)
         egg: (n = 3) => {
           const length = Math.round(Number(n))
           if (!(length >= 3)) {
@@ -617,8 +622,13 @@ export default function App() {
             route,
             length,
             allowMissing: true,
-            onDone: () => {
-              if (loopRef.current === token) loopRef.current = null
+            onDone: (completed) => {
+              if (loopRef.current !== token) return
+              loopRef.current = null
+              // 経路は変えずに、今の中心へのカメラの移動だけを行う。実際の輪の戻る処理と同じ travelTo を通るので、
+              // 演出の前の距離に戻ることも同じ形で確かめられる(カメラワークの後は注視点も今の中心へ戻る)
+              const trailNow = trailRef.current
+              if (completed && trailNow.length > 0) travelTo(trailNow[trailNow.length - 1])
             },
           })
           if (!started) loopRef.current = null
@@ -787,7 +797,9 @@ export default function App() {
   // グラフが空のときのエラーは左上の小さな行ではなく画面中央に出す
   // (URL の start が間違っていた場合など、真っ黒な画面で小さな文字だけでは気づけない)
   const showErrorInCenter = !!error && isEmpty
-  const status = measureStatus
+  const status = loopBanner
+    ? loopBanner
+    : measureStatus
     ? measureStatus
     : loading
       ? `FETCHING${progress > 0 ? ` ${progress}` : ''}`
@@ -824,6 +836,7 @@ export default function App() {
             onNodeClick={handleNodeClick}
             onNodeHover={handleNodeHover}
             onArrivalChange={handleArrivalChange}
+            onLoopChange={handleLoopChange}
             currentId={currentId}
             loadingId={loadingId}
             packetRoutes={packetRoutes}
@@ -834,7 +847,7 @@ export default function App() {
 
           {status && (
             <p
-              className={`status-line${error ? ' is-error' : ''}`}
+              className={`status-line${error ? ' is-error' : ''}${loopBanner && status === loopBanner ? ' is-loop' : ''}`}
               role={error ? 'alert' : 'status'}
             >
               {status}

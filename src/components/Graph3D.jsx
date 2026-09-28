@@ -71,11 +71,8 @@ import {
   CAMERA_START_DISTANCE,
   LABEL_SWAP_S,
   LABEL_SWAP_RISE_PX,
-  EGG_IN_MS,
-  EGG_LAP_MS,
-  EGG_OUT_MS,
-  EGG_REDUCED_HOLD_MS,
   EGG_EDGE_LIT,
+  EGG_CINE_FIT_MARGIN,
   EGG_FIT_MAX_RATIO,
   EGG_FIT_PAD_PX,
   EGG_FIT_MS,
@@ -89,6 +86,7 @@ import {
   computeEdgeSpringK,
   eggColorFor,
 } from '../utils/relation.js'
+import { eggPlan, loopEdgeGlow, orbitFitDistance } from '../utils/eggMotion.js'
 
 /**
  * Three.js本体のみで実装した3Dグラフ描画コンポーネント。
@@ -238,7 +236,7 @@ function displayPosition(ctx, node, out) {
 }
 
 const Graph3D = forwardRef(function Graph3D(
-  { graphData, onNodeClick, onNodeHover, onArrivalChange, currentId, loadingId, packetRoutes, loopHints, seed = 1, config },
+  { graphData, onNodeClick, onNodeHover, onArrivalChange, onLoopChange, currentId, loadingId, packetRoutes, loopHints, seed = 1, config },
   ref
 ) {
   const containerRef = useRef(null)
@@ -246,12 +244,14 @@ const Graph3D = forwardRef(function Graph3D(
   const clickHandlerRef = useRef(onNodeClick)
   const hoverHandlerRef = useRef(onNodeHover)
   const arrivalHandlerRef = useRef(onArrivalChange)
+  const loopHandlerRef = useRef(onLoopChange)
 
   // 最新のハンドラを常に参照できるようにしておく
   // (イベントリスナから呼ぶため、クロージャに古い関数を閉じ込めない)
   clickHandlerRef.current = onNodeClick
   hoverHandlerRef.current = onNodeHover
   arrivalHandlerRef.current = onArrivalChange
+  loopHandlerRef.current = onLoopChange
 
   // ======================================================================
   // 1. マウント時: シーン・カメラ・レンダラーの構築
@@ -513,6 +513,12 @@ const Graph3D = forwardRef(function Graph3D(
       hintStart: null,
       // 輪全体が画面に収まるかを確かめるための、表示と同じ画角のカメラ(演出の開始時だけ使う)
       fitCamera: camera.clone(),
+      // 演出の前のカメラ距離(注視点まで)。演出の後の戻る処理(travelTo)で、この距離に戻す。
+      // 演出のために引いた距離のままだと、08 で今の中心の周りを見やすくした効果が輪を閉じた後に失われるため
+      // (2026-09-28 利用者の指示)。使ったら null
+      restoreDistance: null,
+      // 演出の開始・終了を App に知らせる(カメラワークの間、画面の隅に一行出すため)
+      loopHandlerRef,
     }
     ctxRef.current = ctx
 
@@ -706,9 +712,16 @@ const Graph3D = forwardRef(function Graph3D(
       if (hoverHandlerRef.current) hoverHandlerRef.current(null)
     }
 
+    // ホイールでズームしたら、その距離を利用者の意図として優先する(輪の演出の後に演出の前の距離へ戻さない)。
+    // OrbitControls のホイール処理(start を出して演出を早送りする)より後に登録しているので、早送りの後に呼ばれる
+    const onWheel = () => {
+      ctx.restoreDistance = null
+    }
+
     const el = renderer.domElement
     el.style.cursor = 'grab'
     el.style.display = 'block'
+    el.addEventListener('wheel', onWheel, { passive: true })
     el.addEventListener('pointerdown', onPointerDown)
     el.addEventListener('pointerup', onPointerUp)
     el.addEventListener('pointermove', onPointerMove)
@@ -765,6 +778,7 @@ const Graph3D = forwardRef(function Graph3D(
       if (rafId) cancelAnimationFrame(rafId)
       if (hoverRaf) cancelAnimationFrame(hoverRaf)
       resizeObserver.disconnect()
+      el.removeEventListener('wheel', onWheel)
       el.removeEventListener('pointerdown', onPointerDown)
       el.removeEventListener('pointerup', onPointerUp)
       el.removeEventListener('pointermove', onPointerMove)
@@ -938,6 +952,7 @@ const Graph3D = forwardRef(function Graph3D(
         route: e.route,
         color: '#' + e.color.getHexString(),
         reduced: e.reduced,
+        cinematic: e.cinematic,
         elapsedMs: Math.round(performance.now() - e.start),
         totalMs: e.inMs + e.lapMs + e.outMs,
         missingEdges: e.missing.length,
@@ -1053,6 +1068,7 @@ const Graph3D = forwardRef(function Graph3D(
       const ctx = ctxRef.current
       if (!ctx || ctx.nodes.size === 0) return
       ctx.followId = null
+      ctx.restoreDistance = null
 
       // 何を画面に入れるかは cameraFit で決まる(SPEC 4章。'all' は全体、a〜d は今の中心の周り)。
       // 距離の決め方は画面上の見え方の測定(SPEC 12.5)と共有する
@@ -1085,6 +1101,11 @@ const Graph3D = forwardRef(function Graph3D(
       ctx.followId = null
       const dir = ctx.camera.position.clone().sub(ctx.controls.target)
       if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1)
+      // 輪の演出の後の戻る処理なら、演出の前の距離に戻しながら飛ぶ(向きは今のまま。SPEC 6.11)
+      if (ctx.restoreDistance) {
+        dir.setLength(ctx.restoreDistance)
+        ctx.restoreDistance = null
+      }
       startTween(ctx, {
         nodeId: id, // 目的地はレイアウトで動くので毎フレーム追い直す
         offset: dir,
@@ -1124,6 +1145,8 @@ const Graph3D = forwardRef(function Graph3D(
       if (!ctx) return
       finishLoop(ctx)
       cancelArrival(ctx)
+      // 手でズームしたら、その距離を優先する(演出の前の距離には戻さない)
+      ctx.restoreDistance = null
       if (ctx.tween) return
       const target = ctx.controls.target.clone()
       const offset = ctx.camera.position.clone().sub(target).multiplyScalar(factor)
@@ -2001,10 +2024,17 @@ function cancelArrival(ctx, { refresh = true } = {}) {
 //
 // App が detectLoop(relation.js)で輪を見つけたら、戻る処理の前に playLoop で再生する。
 // 輪の線(経路の線と、今の中心 → 戻り先の子の線)は戻る処理で消えるので、先に見せる必要がある。
-//   IN  … 輪の線と中心の球を輪の色へ寄せ、輪の外を減光する。輪が画面に収まらなければ小さくカメラを引く
-//   LAP … 光が 戻り先 → … → 今の中心 → 戻り先 と一周する(線を順に明るくし、明るいまま残す)
-//   OUT … 色・明るさ・減光を通常に戻しながら消える
+// 時間割は eggPlan(src/utils/eggMotion.js)が決める。
+//   3〜5件(10a)
+//     IN  … 輪の線と中心の球を輪の色へ寄せ、輪の外を減光する。輪が画面に収まらなければ小さくカメラを引く
+//     LAP … 光が 戻り先 → … → 今の中心 → 戻り先 と一周する(線を順に明るくし、明るいまま残す)
+//     OUT … 色・明るさ・減光を通常に戻しながら消える
+//   6件以上(10b。動きを減らす設定では 3〜5件と同じ)
+//     IN    … 注視点を輪の重心へ移し、輪全体がどの向きからでも収まる距離まで引く
+//     ORBIT … 重心の周りを1周する。光は輪を EGG_CINE_LAPS 周走る
+//     OUT   … 色と明るさを戻す(カメラは止めたまま)
 // 終わったら onDone(true) で App に知らせ、App が今までどおりの戻る処理を行う。
+// 戻る処理のカメラの移動(travelTo)で、演出の前の距離に戻す(restoreDistance)。
 // ドラッグ・ホイール・キー・ズームボタンの操作があれば、その時点で早送りして終える(finishLoop)。
 // 色を変えるのは頂点の色(線)と SpriteMaterial.color(球)だけで、線の描き方(実線・破線)は変えない
 // ==========================================================================
@@ -2028,7 +2058,9 @@ function startLoop(ctx, { route, length, onDone, allowMissing }) {
   if (ctx.egg) endLoop(ctx, false)
   cancelArrival(ctx, { refresh: false })
 
-  const reduced = ctx.reducedMotion
+  const plan = eggPlan(length, ctx.reducedMotion)
+  // 演出の前の距離(演出が始まる前に利用者が手でズームしていれば、その距離)
+  const distanceBefore = ctx.camera.position.distanceTo(ctx.controls.target)
   ctx.egg = {
     route,
     length,
@@ -2040,14 +2072,17 @@ function startLoop(ctx, { route, length, onDone, allowMissing }) {
     missing,
     focus: focusForLoop(route),
     start: performance.now(),
-    inMs: EGG_IN_MS,
-    // 動きを減らす設定では一周させず、色を付けて保つだけにする
-    lapMs: reduced ? EGG_REDUCED_HOLD_MS : EGG_LAP_MS,
-    outMs: EGG_OUT_MS,
-    reduced,
+    inMs: plan.inMs,
+    lapMs: plan.lapMs,
+    outMs: plan.outMs,
+    laps: plan.laps,
+    reduced: plan.reduced,
+    cinematic: plan.cinematic,
+    distanceBefore,
     // 色の付き具合(0 = 白、1 = 輪の色)
     mix: 0,
     releasing: false,
+    orbit: null,
     onDone,
   }
 
@@ -2059,14 +2094,73 @@ function startLoop(ctx, { route, length, onDone, allowMissing }) {
   ctx.edgeEgg.geometry = geometry
 
   // 輪の外の減光は IN と同じ時間で入れる
-  ctx.transitionS = reduced ? 0 : EGG_IN_MS / 1000
+  ctx.transitionS = ctx.reducedMotion ? 0 : plan.inMs / 1000
   applyHighlight(ctx)
   updateLabelVisibility(ctx)
-  fitLoopCamera(ctx, route)
+  if (plan.cinematic) startOrbit(ctx, route)
+  else fitLoopCamera(ctx, route)
+  notifyLoop(ctx, ctx.egg)
   return true
 }
 
-/** 毎フレーム: 色の付き具合と、光が一周する進み具合を決める。時間が来たら終える */
+/** 演出の開始(egg)・終了(null)を App に知らせる */
+function notifyLoop(ctx, egg) {
+  const handler = ctx.loopHandlerRef && ctx.loopHandlerRef.current
+  if (handler) handler(egg ? { length: egg.length, cinematic: egg.cinematic } : null)
+}
+
+/**
+ * カメラワークの準備(10b)。輪の重心と、輪を囲む球がどの向きからでも収まる距離を決める。
+ * 今より近づくことはしない(引くだけ)。重心・距離は始めた時点で固定する(演出中に配置が少し動いても、カメラは揺らさない)
+ */
+function startOrbit(ctx, route) {
+  const centroid = new THREE.Vector3()
+  const points = route.map((id) => displayPosition(ctx, ctx.nodes.get(id), new THREE.Vector3()))
+  for (const p of points) centroid.add(p)
+  centroid.divideScalar(points.length)
+  let radius = 0
+  for (const p of points) radius = Math.max(radius, p.distanceTo(centroid))
+  const offset = ctx.camera.position.clone().sub(ctx.controls.target)
+  if (offset.lengthSq() < 1e-6) offset.set(0, 0, 1)
+  const distance = Math.max(
+    offset.length(),
+    orbitFitDistance(radius, ctx.camera.fov, ctx.camera.aspect, EGG_CINE_FIT_MARGIN)
+  )
+  ctx.tween = null
+  ctx.followId = null
+  ctx.egg.orbit = {
+    startPosition: ctx.camera.position.clone(),
+    startTarget: ctx.controls.target.clone(),
+    centroid,
+    // 重心から見たカメラの向き(今の向きのまま)と距離
+    offset: offset.setLength(distance),
+    // 回す軸。OrbitControls と同じ上方向(camera.up)にして、回した後の向きが OrbitControls の扱いと食い違わないようにする
+    axis: ctx.camera.up.clone().normalize(),
+  }
+}
+
+/** 毎フレーム: カメラワークのカメラを置く(10b) */
+function updateOrbit(ctx, elapsed) {
+  const e = ctx.egg
+  const o = e.orbit
+  if (!o) return
+  if (elapsed < e.inMs) {
+    // 輪の重心へ注視点を移しながら引く
+    const p = easeInOut(elapsed / e.inMs)
+    _v1.copy(o.centroid).add(o.offset)
+    ctx.camera.position.lerpVectors(o.startPosition, _v1, p)
+    ctx.controls.target.lerpVectors(o.startTarget, o.centroid, p)
+    return
+  }
+  // 重心の周りを1周する(ゆっくり始まってゆっくり止まる)。1周ちょうどなので、終わると元の向きに戻る
+  const q = Math.min((elapsed - e.inMs) / e.lapMs, 1)
+  const angle = easeInOut(q) * Math.PI * 2
+  _v1.copy(o.offset).applyAxisAngle(o.axis, angle)
+  ctx.camera.position.copy(o.centroid).add(_v1)
+  ctx.controls.target.copy(o.centroid)
+}
+
+/** 毎フレーム: 色の付き具合と、光が輪を回る進み具合を決める。時間が来たら終える */
 function updateLoop(ctx, now) {
   const e = ctx.egg
   if (!e) return
@@ -2078,7 +2172,7 @@ function updateLoop(ctx, now) {
     head = 0
   } else if (elapsed < e.inMs + e.lapMs) {
     e.mix = 1
-    head = ((elapsed - e.inMs) / e.lapMs) * edges
+    head = ((elapsed - e.inMs) / e.lapMs) * edges * e.laps
   } else if (elapsed < e.inMs + e.lapMs + e.outMs) {
     if (!e.releasing) {
       // 消える段階: 輪の外の減光も同じ時間で戻す
@@ -2087,23 +2181,24 @@ function updateLoop(ctx, now) {
       applyHighlight(ctx)
     }
     e.mix = 1 - smoothstep((elapsed - e.inMs - e.lapMs) / e.outMs)
-    head = edges
+    head = edges * e.laps
   } else {
     endLoop(ctx, true)
     return
   }
+  if (e.cinematic) updateOrbit(ctx, elapsed)
   // 動きを減らす設定では、光を走らせず全部の線を色と一緒に明るくする
   if (e.reduced) head = edges
   for (let j = 0; j < edges; j++) {
-    // 線 j は光が来たら 1 本の長さ分かけて明るくなり、そのまま明るく残る(消える段階で色と一緒に戻る)。
-    // どの線も1回しか明るくならないので点滅にならない
-    e.edgeBright[j] = smoothstep(Math.min(Math.max(head - j, 0), 1)) * EGG_EDGE_LIT * e.mix
+    // 光の明るさの決め方は eggMotion.js(点滅の回数をテストで検査している)
+    e.edgeBright[j] = loopEdgeGlow(head, j, edges, e.laps) * EGG_EDGE_LIT * e.mix
   }
 }
 
 /**
  * 演出を終える。completed=true は最後まで再生した・早送りした(App が戻る処理を行う)、
- * false はグラフが作り直されて中断した(App は戻らない)
+ * false はグラフが作り直されて中断した(App は戻らない)。
+ * 最後まで(または早送りで)終えたら、次のカメラの移動で演出の前の距離に戻す(restoreDistance)
  */
 function endLoop(ctx, completed) {
   const e = ctx.egg
@@ -2116,9 +2211,14 @@ function endLoop(ctx, completed) {
     geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3))
     ctx.edgeEgg.geometry = geometry
   }
+  ctx.restoreDistance = completed ? e.distanceBefore : null
+  // 小さく引いている途中(fitLoopCamera のトゥイーン)で早送りしたら、そこで止める。
+  // 続けると、この後の戻る処理のカメラの移動と取り合う
+  if (ctx.tween && !ctx.tween.nodeId) ctx.tween = null
   ctx.transitionS = ctx.reducedMotion ? 0 : HOVER_TRANSITION_S
   applyHighlight(ctx)
   updateLabelVisibility(ctx)
+  notifyLoop(ctx, null)
   if (e.onDone) e.onDone(completed)
 }
 
@@ -2188,7 +2288,8 @@ function stepSimulation(ctx) {
 // 「ついていく」だけになる。
 // ==========================================================================
 function updateFollow(ctx) {
-  if (!ctx.followId || ctx.tween) return
+  // カメラワーク(SPEC 6.11)の間は演出がカメラを動かす
+  if (!ctx.followId || ctx.tween || (ctx.egg && ctx.egg.cinematic)) return
   const node = ctx.nodes.get(ctx.followId)
   if (!node) {
     ctx.followId = null

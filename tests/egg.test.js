@@ -183,3 +183,109 @@ describe('輪を閉じた後の戻る処理', () => {
     assert.equal(startsArrival(['A', 'B', 'C', 'D'], ['A']), false)
   })
 })
+
+import { eggPlan, loopEdgeGlow, orbitFitDistance } from '../src/utils/eggMotion.js'
+
+describe('演出の時間割(eggPlan。10b)', () => {
+  test('6件以上はカメラワーク、5件以下は光らせるだけ', () => {
+    for (const n of [3, 4, 5]) assert.equal(eggPlan(n, false).cinematic, false, String(n))
+    for (const n of [6, 7, 9, 12]) assert.equal(eggPlan(n, false).cinematic, true, String(n))
+  })
+
+  test('動きを減らす設定ではカメラワークを行わず、光も走らせない(3〜5件と同じ演出)', () => {
+    for (const n of [3, 6, 9]) {
+      const p = eggPlan(n, true)
+      assert.equal(p.cinematic, false, String(n))
+      assert.equal(p.reduced, true, String(n))
+    }
+  })
+
+  test('全体の長さの目安: 3〜5件は2秒前後、6件以上は5秒前後', () => {
+    const total = (p) => p.inMs + p.lapMs + p.outMs
+    assert.ok(Math.abs(total(eggPlan(3, false)) - 2000) <= 300)
+    assert.ok(Math.abs(total(eggPlan(6, false)) - 5000) <= 500)
+    // カメラワークでは光が輪を何周か走る
+    assert.ok(eggPlan(6, false).laps >= 2)
+  })
+})
+
+/**
+ * 線 j の明るさの山の時刻(ms)。0.9 を超えたら山、0.8 を下回ったら次の山を数えられる(ヒステリシス)。
+ * 明るいまま残る線(3〜5件)は、山が1回だけと数える
+ */
+function peakTimes(plan, edges, j, stepMs = 5) {
+  const out = []
+  let armed = true
+  for (let t = 0; t <= plan.lapMs; t += stepMs) {
+    const v = loopEdgeGlow((t / plan.lapMs) * edges * plan.laps, j, edges, plan.laps)
+    if (armed && v > 0.9) {
+      out.push(t)
+      armed = false
+    } else if (!armed && v < 0.8) {
+      armed = true
+    }
+  }
+  return out
+}
+
+describe('光の明るさ(loopEdgeGlow)と点滅の安全', () => {
+  test('3〜5件: どの線も明るくなるのは1回だけで、明るいまま残る', () => {
+    const p = eggPlan(4, false)
+    for (let j = 0; j < 4; j++) {
+      assert.equal(loopEdgeGlow(0, j, 4, p.laps), 0)
+      assert.equal(loopEdgeGlow(4 * p.laps, j, 4, p.laps), 1)
+      assert.equal(peakTimes(p, 4, j).length, 1, `線 ${j}`)
+    }
+  })
+
+  test('光は 戻り先 → … → 今の中心 → 戻り先 の順に進む(番号の小さい線から先に明るくなる)', () => {
+    for (const n of [3, 6, 9]) {
+      const p = eggPlan(n, false)
+      const firstLit = []
+      for (let j = 0; j < n; j++) {
+        let t = 0
+        while (loopEdgeGlow((t / p.lapMs) * n * p.laps, j, n, p.laps) < 0.5) t += 5
+        firstLit.push(t)
+      }
+      for (let j = 1; j < n; j++) assert.ok(firstLit[j] > firstLit[j - 1], `${n}: 線 ${j}`)
+    }
+  })
+
+  test('6〜9件: どの線も、1秒間に3回を超えて明るさの山が来ない', () => {
+    for (const n of [6, 7, 8, 9]) {
+      const p = eggPlan(n, false)
+      for (let j = 0; j < n; j++) {
+        const peaks = peakTimes(p, n, j)
+        assert.ok(peaks.length >= 2, `${n}件 線 ${j}: 光が何周か走る`)
+        for (let k = 0; k < peaks.length; k++) {
+          const within = peaks.filter((t) => t >= peaks[k] && t < peaks[k] + 1000).length
+          assert.ok(within <= 3, `${n}件 線 ${j}: 1秒に ${within} 回`)
+        }
+      }
+    }
+  })
+
+  test('6〜9件: 山と山のあいだも暗くしすぎない(明暗の差を小さくする)', () => {
+    const p = eggPlan(6, false)
+    // 1周目を終えたあとは、どの線も底(EGG_CINE_BASE)より暗くならない
+    for (let head = 6; head <= 6 * p.laps; head += 0.05) {
+      for (let j = 0; j < 6; j++) assert.ok(loopEdgeGlow(head, j, 6, p.laps) >= 0.5, `head ${head} 線 ${j}`)
+    }
+  })
+})
+
+describe('カメラワークの距離(orbitFitDistance)', () => {
+  test('輪を囲む球が、縦にも横にも画角の中に入る', () => {
+    for (const aspect of [940 / 736, 844 / 346, 0.5]) {
+      const d = orbitFitDistance(100, 45, aspect, 1)
+      const halfV = (45 * Math.PI) / 360
+      const halfH = Math.atan(Math.tan(halfV) * aspect)
+      // 球の見かけの半角 asin(r/d) が、縦・横の半角以下
+      assert.ok(Math.asin(100 / d) <= Math.min(halfV, halfH) + 1e-9, String(aspect))
+    }
+  })
+
+  test('縦長(スマホの縦画面)では、横の画角に合わせて遠くなる', () => {
+    assert.ok(orbitFitDistance(100, 45, 0.5, 1) > orbitFitDistance(100, 45, 1.5, 1))
+  })
+})

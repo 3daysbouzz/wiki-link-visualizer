@@ -79,6 +79,7 @@ tests/                        node:test のユニットテスト(API のエラ�
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
 `src/utils/depthFade.js`(ラベルの深さフェードの計算)は SPEC 6.3。
+`src/utils/eggMotion.js`(輪の演出の時間割・光の明るさ・カメラワークの距離。タスク10)は SPEC 6.11。
 `src/utils/buildGraph.js`(trail からグラフを組み立てる)は SPEC 7章、
 `src/utils/relation.js`(関連の強さを配置と動きで見せる計算・到着時の強調の対象。rev3・rev4)は SPEC 6.9・6.10、
 同じファイルの輪の判定・輪の候補・輪の色(`detectLoop`・`loopCandidates`・`eggColorFor`。タスク10)は SPEC 6.11。
@@ -199,7 +200,7 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 候補の比較は `variants`、Wikipedia の変化に左右されない比較は保存した展開結果(`data`)で行う(SPEC 12.5)。基準値は `docs/tasks/06-report-baseline.md`、項目と決まりは SPEC 12.5。
 `[measure] …閲覧数を取れなかった記事が…` の警告が出た回は、数字が再現しないことがあるので測り直す。
 
-輪を閉じたときの演出(SPEC 6.11)は、`?debug=1` の `window.__viz.egg(n)`(n = 3〜9)で輪がなくても試せる。
+輪を閉じたときの演出(SPEC 6.11)は、`?debug=1` の `window.__viz.egg(n)`(n = 3〜9。6 以上はカメラワーク)で輪がなくても試せる。
 実際に輪を閉じると Console に `[egg] 輪を閉じた: 長さ N / 顔ぶれ` が出る(試用でどのくらいの長さの輪ができているかを知るため)。
 
 ## 説明のしかた
