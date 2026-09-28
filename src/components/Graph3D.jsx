@@ -72,7 +72,10 @@ import {
   LABEL_SWAP_S,
   LABEL_SWAP_RISE_PX,
   EGG_EDGE_LIT,
-  EGG_CINE_FIT_MARGIN,
+  EGG_CINE_ELEV_DEG,
+  EGG_CINE_DIM,
+  EGG_POLY_PAD_PX,
+  EGG_POLY_MAX_PX,
   EGG_FIT_MAX_RATIO,
   EGG_FIT_PAD_PX,
   EGG_FIT_MS,
@@ -86,7 +89,15 @@ import {
   computeEdgeSpringK,
   eggColorFor,
 } from '../utils/relation.js'
-import { eggPlan, loopEdgeGlow, orbitFitDistance } from '../utils/eggMotion.js'
+import {
+  eggPlan,
+  loopEdgeGlow,
+  rotateY,
+  polygonVertices,
+  snapshotLayout,
+  restoreLayout,
+  polygonFitDistance,
+} from '../utils/eggMotion.js'
 
 /**
  * Three.js本体のみで実装した3Dグラフ描画コンポーネント。
@@ -402,6 +413,7 @@ const Graph3D = forwardRef(function Graph3D(
         depthTest: false,
         depthWrite: false,
       })
+      material.userData.baseOpacity = material.opacity
       gridMaterials.push(material)
       const loop = new THREE.LineLoop(geometry, material)
       loop.renderOrder = -10
@@ -415,6 +427,7 @@ const Graph3D = forwardRef(function Graph3D(
       depthTest: false,
       depthWrite: false,
     })
+    radialMaterial.userData.baseOpacity = radialMaterial.opacity
     gridMaterials.push(radialMaterial)
     const radialPoints = []
     for (let i = 0; i < GRID_RADIAL_COUNT; i++) {
@@ -519,6 +532,10 @@ const Graph3D = forwardRef(function Graph3D(
       restoreDistance: null,
       // 演出の開始・終了を App に知らせる(カメラワークの間、画面の隅に一行出すため)
       loopHandlerRef,
+      // 力学を止めているか(輪を並べ替えている間。10c)。止めている間はステップを進めず、溜まった時間も捨てる
+      simPaused: false,
+      // 直前の演出の記録(デバッグ用。並べ替えた後に力学の状態が完全に元どおりになったか)
+      lastLoop: null,
     }
     ctxRef.current = ctx
 
@@ -738,7 +755,8 @@ const Graph3D = forwardRef(function Graph3D(
       const t = now / 1000
 
       // 固定刻みで進める。溜まった時間を刻みごとに消化する(遅いフレームでは数回、速ければ0回)
-      ctx.simAccumulator += dt
+      // 輪を並べ替えている間(10c)は力学を止める。時間も溜めない(再開したときに一気に進めないため)
+      ctx.simAccumulator = ctx.simPaused ? 0 : ctx.simAccumulator + dt
       const stepDt = 1 / SIM_STEPS_PER_SEC
       let steps = 0
       while (ctx.simAccumulator >= stepDt && steps < SIM_MAX_STEPS_PER_FRAME) {
@@ -953,10 +971,22 @@ const Graph3D = forwardRef(function Graph3D(
         color: '#' + e.color.getHexString(),
         reduced: e.reduced,
         cinematic: e.cinematic,
+        arranged: !!e.orbit,
         elapsedMs: Math.round(performance.now() - e.start),
         totalMs: e.inMs + e.lapMs + e.outMs,
         missingEdges: e.missing.length,
+        // 輪の外がどこまで薄くなっているか(球の不透明度・線の明るさの最大値)
+        outside: outsideBrightness(ctx, e),
       }
+    },
+
+    /**
+     * 直前の演出の記録(デバッグ用。10c)。並べ替えた場合、演出の前と戻した後で
+     * 全ノードの位置・速度・alpha が完全に同じか(identical)と、演出中に進めた力学のステップ数(stepsDuring。0 のはず)
+     */
+    getLastLoop() {
+      const ctx = ctxRef.current
+      return ctx ? ctx.lastLoop : null
     },
 
     /** 輪の候補として合図している記事(デバッグ用) */
@@ -1460,6 +1490,8 @@ function applyHighlight(ctx) {
   // 輪の演出(SPEC 6.11)。輪の外をホバーと同じ比率まで落とし、色の付いた輪を読みやすくする。
   // 消える段階(releasing)では減光も一緒に戻す
   const egg = ctx.egg && !ctx.egg.releasing ? ctx.egg : null
+  // 輪を並べ替えるカメラワーク(10c)では、輪以外をほぼ見えないところまで落とす(×0.3 では並べ替えで伸びた線が目立つため)
+  const eggDim = egg && egg.orbit ? EGG_CINE_DIM : HOVER_DIM_RATIO
 
   for (const node of ctx.nodes.values()) {
     const t = node.target
@@ -1468,7 +1500,7 @@ function applyHighlight(ctx) {
     t.opacity = node.baseOpacity
 
     if (egg) {
-      if (!egg.nodes.has(node.id)) t.opacity = node.baseOpacity * HOVER_DIM_RATIO
+      if (!egg.nodes.has(node.id)) t.opacity = node.baseOpacity * eggDim
     } else if (hoveredId) {
       if (node.id === hoveredId) {
         t.scale = HOVER_SCALE
@@ -1493,7 +1525,7 @@ function applyHighlight(ctx) {
       : ctx.visual.edgeWeakOpacity
     let bright = base
     if (egg) {
-      if (!egg.edgeIndex.has(`${link.source}->${link.target}`)) bright = base * HOVER_DIM_RATIO
+      if (!egg.edgeIndex.has(`${link.source}->${link.target}`)) bright = base * eggDim
     } else if (hoveredId) {
       if (link.source === hoveredId || link.target === hoveredId) {
         bright = EDGE_HOVER_OPACITY
@@ -1808,6 +1840,11 @@ function updateGrid(ctx, t) {
     return
   }
   ctx.grid.visible = true
+  // 輪を並べ替えている間(10c)は、グリッドも輪の外と同じ比率まで薄くする。グリッドは今の中心(多角形の頂点の1つに
+  // 動く)を中心に描くので、そのままだと輪の形の上に同心円と放射線が重なって見えるため。色の付き具合と一緒に戻す
+  const e = ctx.egg
+  const fade = e && e.orbit ? 1 - (1 - EGG_CINE_DIM) * e.mix : 1
+  for (const m of ctx.gridMaterials) m.opacity = m.userData.baseOpacity * fade
   // グリッドは背景レイヤーなので背景のドリフトに乗せる
   ctx.grid.position.set(
     current.x + ctx.driftBack.x,
@@ -2093,12 +2130,13 @@ function startLoop(ctx, { route, length, onDone, allowMissing }) {
   geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(missing.length * 6), 3))
   ctx.edgeEgg.geometry = geometry
 
+  // カメラワークなら輪を並べ替える準備を先にする(輪の外をどこまで薄くするかが、並べ替えるかで変わるため)
+  if (plan.cinematic) startOrbit(ctx, route)
   // 輪の外の減光は IN と同じ時間で入れる
   ctx.transitionS = ctx.reducedMotion ? 0 : plan.inMs / 1000
   applyHighlight(ctx)
   updateLabelVisibility(ctx)
-  if (plan.cinematic) startOrbit(ctx, route)
-  else fitLoopCamera(ctx, route)
+  if (!plan.cinematic) fitLoopCamera(ctx, route)
   notifyLoop(ctx, ctx.egg)
   return true
 }
@@ -2110,54 +2148,130 @@ function notifyLoop(ctx, egg) {
 }
 
 /**
- * カメラワークの準備(10b)。輪の重心と、輪を囲む球がどの向きからでも収まる距離を決める。
- * 今より近づくことはしない(引くだけ)。重心・距離は始めた時点で固定する(演出中に配置が少し動いても、カメラは揺らさない)
+ * カメラワークの準備(10b・10c)。
+ *   - 演出の前の全ノードの位置・速度と alpha を記録し、力学を止める(10c)
+ *   - 輪の記事を、重心を中心とする水平な面の上の正多角形の頂点へ動かす行き先を決める(経路の順。polygonVertices)。
+ *     多角形の大きさは今の輪の広がり(重心からの平均距離)のまま
+ *   - カメラは、その面を EGG_CINE_ELEV_DEG 度の斜め上から見下ろす位置。距離は、一周のどの角度でも
+ *     輪全体とラベルが画面(スマホの横画面でも)に収まる距離(polygonFitDistance)
  */
 function startOrbit(ctx, route) {
+  const members = route.map((id) => ctx.nodes.get(id))
   const centroid = new THREE.Vector3()
-  const points = route.map((id) => displayPosition(ctx, ctx.nodes.get(id), new THREE.Vector3()))
-  for (const p of points) centroid.add(p)
-  centroid.divideScalar(points.length)
-  let radius = 0
-  for (const p of points) radius = Math.max(radius, p.distanceTo(centroid))
+  for (const n of members) centroid.add(_v1.set(n.x, n.y, n.z))
+  centroid.divideScalar(members.length)
+  let spread = 0
+  for (const n of members) spread += _v1.set(n.x, n.y, n.z).distanceTo(centroid)
+  spread /= members.length
+
   const offset = ctx.camera.position.clone().sub(ctx.controls.target)
   if (offset.lengthSq() < 1e-6) offset.set(0, 0, 1)
-  const distance = Math.max(
-    offset.length(),
-    orbitFitDistance(radius, ctx.camera.fov, ctx.camera.aspect, EGG_CINE_FIT_MARGIN)
+  // 輪の記事が1点に重なっていても多角形がつぶれないよう、今のカメラ距離に対する下限を付ける
+  const radius = Math.max(spread, offset.length() * 0.05)
+  // 水平な面の上での、重心からカメラへの向き(真上から見ていたら手前 = +z にする)
+  const front = { x: offset.x, z: offset.z }
+  if (Math.hypot(front.x, front.z) < 1e-6 * offset.length()) front.z = 1
+  const fl = Math.hypot(front.x, front.z)
+
+  const el = ctx.renderer.domElement
+  let labelW = 0
+  let labelH = 0
+  for (const n of members) {
+    if (!n.label) continue
+    labelW = Math.max(labelW, n.label.userData.px * n.label.userData.aspect)
+    labelH = Math.max(labelH, n.label.userData.px)
+  }
+  const distance = polygonFitDistance(
+    radius,
+    EGG_CINE_ELEV_DEG,
+    ctx.camera.fov,
+    el.clientWidth,
+    el.clientHeight,
+    labelW,
+    labelH,
+    { pad: EGG_POLY_PAD_PX, maxPx: EGG_POLY_MAX_PX }
   )
+  const elev = (EGG_CINE_ELEV_DEG * Math.PI) / 180
+  const view = new THREE.Vector3(
+    (front.x / fl) * Math.cos(elev),
+    Math.sin(elev),
+    (front.z / fl) * Math.cos(elev)
+  ).multiplyScalar(distance)
+  const vertices = polygonVertices(route.length, centroid, front, radius)
+
+  const snapshot = snapshotLayout(ctx.nodes, ctx.alpha)
+  ctx.simPaused = true
   ctx.tween = null
   ctx.followId = null
   ctx.egg.orbit = {
+    snapshot,
+    // 記録した時点の力学の状態の文字列と、ステップ数(戻した後に完全に元どおりかを確かめる。デバッグ用)
+    signature: layoutSignature(ctx),
+    stepsAtStart: ctx.simSteps,
+    members,
+    from: members.map((n) => ({ x: n.x, y: n.y, z: n.z })),
+    to: vertices,
     startPosition: ctx.camera.position.clone(),
     startTarget: ctx.controls.target.clone(),
     centroid,
-    // 重心から見たカメラの向き(今の向きのまま)と距離
-    offset: offset.setLength(distance),
-    // 回す軸。OrbitControls と同じ上方向(camera.up)にして、回した後の向きが OrbitControls の扱いと食い違わないようにする
-    axis: ctx.camera.up.clone().normalize(),
+    view,
   }
 }
 
-/** 毎フレーム: カメラワークのカメラを置く(10b) */
+/** 輪の外の球の不透明度と線の明るさの最大値(デバッグ用。window.__viz.loop()) */
+function outsideBrightness(ctx, e) {
+  let node = 0
+  let link = 0
+  for (const n of ctx.nodes.values()) if (!e.nodes.has(n.id)) node = Math.max(node, n.vis.opacity)
+  for (const l of ctx.links) if (!e.edgeIndex.has(`${l.source}->${l.target}`)) link = Math.max(link, l.bright)
+  return { node: Math.round(node * 1000) / 1000, link: Math.round(link * 1000) / 1000 }
+}
+
+/** 力学の状態(全ノードの位置・速度と alpha)を丸めずに文字列にする(デバッグ用の照合) */
+function layoutSignature(ctx) {
+  const rows = []
+  for (const [id, n] of ctx.nodes) rows.push([id, n.x, n.y, n.z, n.vx, n.vy, n.vz])
+  return JSON.stringify([ctx.alpha, rows])
+}
+
+/**
+ * 毎フレーム: 輪の記事の位置とカメラを置く(10b・10c)。
+ *   IN    … 輪の記事を多角形の頂点へ、カメラを見下ろす位置へ補間する
+ *   ORBIT … 多角形のまま、カメラが重心の周りを縦軸で一周する(光と同じ +の向き。rotateY)
+ *   OUT   … 輪の記事を記録した位置へ、カメラを演出の前の位置へ補間して戻す(最後は endLoop が補間なしで元どおりにする)
+ */
 function updateOrbit(ctx, elapsed) {
   const e = ctx.egg
   const o = e.orbit
   if (!o) return
+  let place // 0 = 記録した位置、1 = 多角形
   if (elapsed < e.inMs) {
-    // 輪の重心へ注視点を移しながら引く
     const p = easeInOut(elapsed / e.inMs)
-    _v1.copy(o.centroid).add(o.offset)
+    place = p
+    _v1.copy(o.centroid).add(o.view)
     ctx.camera.position.lerpVectors(o.startPosition, _v1, p)
     ctx.controls.target.lerpVectors(o.startTarget, o.centroid, p)
-    return
+  } else if (elapsed < e.inMs + e.lapMs) {
+    place = 1
+    const angle = easeInOut((elapsed - e.inMs) / e.lapMs) * Math.PI * 2
+    const v = rotateY(o.view, angle)
+    ctx.camera.position.set(o.centroid.x + v.x, o.centroid.y + v.y, o.centroid.z + v.z)
+    ctx.controls.target.copy(o.centroid)
+  } else {
+    const p = easeInOut(Math.min((elapsed - e.inMs - e.lapMs) / e.outMs, 1))
+    place = 1 - p
+    _v1.copy(o.centroid).add(o.view)
+    ctx.camera.position.lerpVectors(_v1, o.startPosition, p)
+    ctx.controls.target.lerpVectors(o.centroid, o.startTarget, p)
   }
-  // 重心の周りを1周する(ゆっくり始まってゆっくり止まる)。1周ちょうどなので、終わると元の向きに戻る
-  const q = Math.min((elapsed - e.inMs) / e.lapMs, 1)
-  const angle = easeInOut(q) * Math.PI * 2
-  _v1.copy(o.offset).applyAxisAngle(o.axis, angle)
-  ctx.camera.position.copy(o.centroid).add(_v1)
-  ctx.controls.target.copy(o.centroid)
+  for (let i = 0; i < o.members.length; i++) {
+    const n = o.members[i]
+    const a = o.from[i]
+    const b = o.to[i]
+    n.x = a.x + (b.x - a.x) * place
+    n.y = a.y + (b.y - a.y) * place
+    n.z = a.z + (b.z - a.z) * place
+  }
 }
 
 /** 毎フレーム: 色の付き具合と、光が輪を回る進み具合を決める。時間が来たら終える */
@@ -2210,6 +2324,24 @@ function endLoop(ctx, completed) {
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3))
     geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3))
     ctx.edgeEgg.geometry = geometry
+  }
+  // 並べ替えていたら(10c)、補間せずに記録した位置・速度・alpha へ戻し、カメラも演出の前の位置へ戻してから力学を再開する。
+  // 早送り・中断でも同じ。戻る処理の後の配置を、並べ替えをしなかった場合と一致させるため
+  if (e.orbit) {
+    const o = e.orbit
+    ctx.alpha = restoreLayout(ctx.nodes, o.snapshot)
+    ctx.camera.position.copy(o.startPosition)
+    ctx.controls.target.copy(o.startTarget)
+    ctx.lastLoop = {
+      length: e.length,
+      arranged: true,
+      identical: layoutSignature(ctx) === o.signature,
+      stepsDuring: ctx.simSteps - o.stepsAtStart,
+      completed,
+    }
+    ctx.simPaused = false
+  } else {
+    ctx.lastLoop = { length: e.length, arranged: false, completed }
   }
   ctx.restoreDistance = completed ? e.distanceBefore : null
   // 小さく引いている途中(fitLoopCamera のトゥイーン)で早送りしたら、そこで止める。

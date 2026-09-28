@@ -184,7 +184,25 @@ describe('輪を閉じた後の戻る処理', () => {
   })
 })
 
-import { eggPlan, loopEdgeGlow, orbitFitDistance } from '../src/utils/eggMotion.js'
+import {
+  eggPlan,
+  loopEdgeGlow,
+  rotateY,
+  polygonVertices,
+  snapshotLayout,
+  restoreLayout,
+  polygonFitDistance,
+} from '../src/utils/eggMotion.js'
+import { buildSim, settleSim } from '../src/utils/forceLayout.js'
+import crypto from 'node:crypto'
+import {
+  EGG_CINE_ELEV_DEG,
+  EGG_POLY_PAD_PX,
+  EGG_POLY_MAX_PX,
+  MEASURE_VIEWPORTS,
+  LABEL_PX,
+  CAMERA_FOV,
+} from '../src/constants.js'
 
 describe('演出の時間割(eggPlan。10b)', () => {
   test('6件以上はカメラワーク、5件以下は光らせるだけ', () => {
@@ -274,18 +292,121 @@ describe('光の明るさ(loopEdgeGlow)と点滅の安全', () => {
   })
 })
 
-describe('カメラワークの距離(orbitFitDistance)', () => {
-  test('輪を囲む球が、縦にも横にも画角の中に入る', () => {
-    for (const aspect of [940 / 736, 844 / 346, 0.5]) {
-      const d = orbitFitDistance(100, 45, aspect, 1)
-      const halfV = (45 * Math.PI) / 360
-      const halfH = Math.atan(Math.tan(halfV) * aspect)
-      // 球の見かけの半角 asin(r/d) が、縦・横の半角以下
-      assert.ok(Math.asin(100 / d) <= Math.min(halfV, halfH) + 1e-9, String(aspect))
+describe('カメラワークの前に輪を並べ替える(10c)', () => {
+  test('rotateY は three の applyAxisAngle((0,1,0), angle) と同じ向き', async () => {
+    const THREE = await import('three')
+    for (const angle of [0.3, 1.2, -2]) {
+      const v = new THREE.Vector3(1.5, 0.4, -0.7).applyAxisAngle(new THREE.Vector3(0, 1, 0), angle)
+      const r = rotateY({ x: 1.5, y: 0.4, z: -0.7 }, angle)
+      assert.ok(Math.abs(v.x - r.x) < 1e-12 && Math.abs(v.y - r.y) < 1e-12 && Math.abs(v.z - r.z) < 1e-12)
     }
   })
 
-  test('縦長(スマホの縦画面)では、横の画角に合わせて遠くなる', () => {
-    assert.ok(orbitFitDistance(100, 45, 0.5, 1) > orbitFitDistance(100, 45, 1.5, 1))
+  test('頂点は重心を中心とする水平な面の上の正多角形。今の中心(最後)がカメラの側に来る', () => {
+    const center = { x: 10, y: -5, z: 3 }
+    for (const n of [6, 7, 9]) {
+      const vs = polygonVertices(n, center, { x: 0, z: 2 }, 50)
+      assert.equal(vs.length, n)
+      const side = Math.hypot(vs[1].x - vs[0].x, vs[1].z - vs[0].z)
+      for (let j = 0; j < n; j++) {
+        const v = vs[j]
+        const w = vs[(j + 1) % n]
+        assert.equal(v.y, center.y)
+        assert.ok(Math.abs(Math.hypot(v.x - center.x, v.z - center.z) - 50) < 1e-9)
+        assert.ok(Math.abs(Math.hypot(w.x - v.x, w.z - v.z) - side) < 1e-9, `${n}: 辺 ${j}`)
+      }
+      const last = vs[n - 1]
+      assert.ok(Math.abs(last.x - center.x) < 1e-9 && Math.abs(last.z - center.z - 50) < 1e-9)
+    }
+  })
+
+  test('光が輪を走る向き(頂点 j → j+1)と、カメラが回る向き(角度が増える)が揃っている', () => {
+    const center = { x: 0, y: 0, z: 0 }
+    const vs = polygonVertices(6, center, { x: 1, z: 0 }, 1)
+    // 頂点 j+1 は頂点 j を +2π/6 だけ rotateY したもの = カメラの向き(rotateY(view, +angle))と同じ回り方
+    for (let j = 0; j < 6; j++) {
+      const r = rotateY(vs[j], (2 * Math.PI) / 6)
+      const w = vs[(j + 1) % 6]
+      assert.ok(Math.abs(r.x - w.x) < 1e-9 && Math.abs(r.z - w.z) < 1e-9, `頂点 ${j}`)
+    }
+  })
+
+  test('スマホの横画面・pc でも、一周のどの角度でも、多角形と横に出るラベルが画面に収まる(three で投影して確かめる)', async () => {
+    const THREE = await import('three')
+    // ラベルの幅は、打ち切られた最長の記事名(16文字 + …)を JetBrains Mono 12px(1文字 約 0.6em)で見積もる
+    const labelW = 17 * LABEL_PX * 0.6
+    const labelH = 16
+    const opts = { pad: EGG_POLY_PAD_PX, maxPx: EGG_POLY_MAX_PX }
+    const elev = (EGG_CINE_ELEV_DEG * Math.PI) / 180
+    for (const [key, vp] of Object.entries(MEASURE_VIEWPORTS)) {
+      for (const n of [6, 9]) {
+        const radius = 100
+        const D = polygonFitDistance(radius, EGG_CINE_ELEV_DEG, CAMERA_FOV, vp.width, vp.height, labelW, labelH, opts)
+        const center = { x: 0, y: 0, z: 0 }
+        const view = { x: 0, y: Math.sin(elev) * D, z: Math.cos(elev) * D }
+        const vs = polygonVertices(n, center, { x: 0, z: 1 }, radius)
+        const camera = new THREE.PerspectiveCamera(CAMERA_FOV, vp.width / vp.height, 1, 100000)
+        let widest = 0
+        let tallest = 0
+        for (let k = 0; k < 36; k++) {
+          const v = rotateY(view, (k / 36) * Math.PI * 2)
+          camera.position.set(v.x, v.y, v.z)
+          camera.lookAt(0, 0, 0)
+          camera.updateMatrixWorld(true)
+          for (const p of vs) {
+            const s = new THREE.Vector3(p.x, p.y, p.z).project(camera)
+            const sx = (s.x * 0.5 + 0.5) * vp.width
+            const sy = (-s.y * 0.5 + 0.5) * vp.height
+            widest = Math.max(widest, Math.abs(sx - vp.width / 2))
+            tallest = Math.max(tallest, Math.abs(sy - vp.height / 2))
+            assert.ok(Math.abs(sx - vp.width / 2) + 16 + labelW <= vp.width / 2 - EGG_POLY_PAD_PX + 0.5, `${key} ${n}: 横 ${sx}`)
+            assert.ok(Math.abs(sy - vp.height / 2) + labelH / 2 <= vp.height / 2 - EGG_POLY_PAD_PX + 0.5, `${key} ${n}: 縦 ${sy}`)
+          }
+        }
+        // 必要以上に引いていない: 横か縦のどちらかが収まる限界まで広がっている。
+        // そうでなければ、大きな画面で広がりすぎないための上限(重心の深さで半径 EGG_POLY_MAX_PX)で止めている
+        const focal = vp.height / 2 / Math.tan((CAMERA_FOV * Math.PI) / 360)
+        const atLimit =
+          widest + 16 + labelW >= vp.width / 2 - EGG_POLY_PAD_PX - 3 ||
+          tallest + labelH / 2 >= vp.height / 2 - EGG_POLY_PAD_PX - 3 ||
+          Math.abs((radius * focal) / D - EGG_POLY_MAX_PX) < 0.5
+        assert.ok(atLimit, `${key} ${n}: 横 ${widest}px・縦 ${tallest}px`)
+      }
+    }
+  })
+
+  test('並べ替えて戻した後の配置は、並べ替えをしなかった場合と一致する(その後も力学を進めて比べる)', () => {
+    const walks = JSON.parse(fs.readFileSync(new URL('./fixtures/walk-routes.json', import.meta.url), 'utf8'))
+    const hash = (sim) =>
+      crypto.createHash('sha256').update(JSON.stringify([sim.alpha, [...sim.nodes].map(([id, n]) => [id, n.x, n.y, n.z, n.vx, n.vy, n.vz])])).digest('hex')
+    for (const key of ['walk-top-コーヒー', 'walk-draw-富士山']) {
+      const { trail, expansions } = walks[key]
+      const e = new Map(Object.entries(expansions).map(([k, v]) => [k, v.slice(0, PRESETS.rev5.neighborLimit)]))
+      const make = () => {
+        const sim = buildSim(buildGraph(trail, e, new Map(), PRESETS.rev5), PRESETS.rev5)
+        settleSim(sim, 40) // 落ち着く途中(速度が残っている)で演出が始まった場合
+        return sim
+      }
+      const plain = make()
+      const arranged = make()
+      assert.equal(hash(plain), hash(arranged))
+
+      // 演出: 記録 → 輪の記事を多角形へ動かす(力学は止める)→ 記録した位置へ戻す
+      const snap = snapshotLayout(arranged.nodes, arranged.alpha)
+      const members = trail.map((id) => arranged.nodes.get(id))
+      const vs = polygonVertices(members.length, { x: 0, y: 0, z: 0 }, { x: 0, z: 1 }, 300)
+      members.forEach((n, i) => Object.assign(n, vs[i], { vx: 9, vy: 9, vz: 9 }))
+      arranged.alpha = 0.5
+      arranged.alpha = restoreLayout(arranged.nodes, snap)
+      assert.equal(hash(arranged), hash(plain), `${key}: 戻した直後`)
+
+      // 戻る処理の後(経路を戻り先で切って組み直し、力学を進める)も一致する
+      const back = trail.slice(0, 2)
+      const s1 = buildSim(buildGraph(back, e, new Map(), PRESETS.rev5), PRESETS.rev5, plain)
+      const s2 = buildSim(buildGraph(back, e, new Map(), PRESETS.rev5), PRESETS.rev5, arranged)
+      settleSim(s1, 3000)
+      settleSim(s2, 3000)
+      assert.equal(hash(s2), hash(s1), `${key}: 戻る処理の後`)
+    }
   })
 })

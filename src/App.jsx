@@ -637,6 +637,9 @@ export default function App() {
         // 演出の状態と、輪の候補(明るさの脈動で合図している記事)
         loop: () => graphRef.current?.getLoopState() || null,
         loopHints: () => graphRef.current?.getLoopHints() || [],
+        // 直前の演出の記録。輪を並べ替えた場合(10c)、戻した後に力学の状態(全ノードの位置・速度・alpha)が
+        // 演出の前と完全に同じか(identical)と、演出中に進めた力学のステップ数(stepsDuring。0 のはず)
+        lastLoop: () => graphRef.current?.getLastLoop() || null,
         // 直前の measure() の結果
         lastMeasure: null,
         // 直前の結果を、レポートに貼れる Markdown の表にする

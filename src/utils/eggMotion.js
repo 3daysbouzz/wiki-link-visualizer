@@ -4,7 +4,7 @@
  *
  *   - 演出の時間割(eggPlan): 3〜5件は光らせるだけ、6件以上はカメラワーク(10b)
  *   - 線ごとの光の明るさ(loopEdgeGlow)
- *   - 輪全体がどの向きからでも収まるカメラ距離(orbitFitDistance)
+ *   - 輪を並べ替える正多角形(polygonVertices)・それを見下ろすカメラの距離(polygonFitDistance)・力学の状態の記録と復元(10c)
  */
 import {
   EGG_CINEMATIC_MIN,
@@ -71,15 +71,107 @@ export function loopEdgeGlow(head, j, edges, laps) {
   return d < 1 ? floor + (1 - floor) * rise : EGG_CINE_BASE + (1 - EGG_CINE_BASE) * tail
 }
 
+// ==========================================================================
+// カメラワークの前に輪を並べ替える(10c)
+// ==========================================================================
+
 /**
- * 半径 radius の球(輪を囲む球)が、どの向きから見ても画面に収まるカメラ距離。
- * 画角の短い方(縦 fov と、横の画角のうち小さい方)の半分に球が入る距離に、余裕 margin を掛ける
- * @param {number} fovDeg 縦の画角(度)
- * @param {number} aspect 幅 ÷ 高さ
+ * 縦軸(y)の周りの回転。three の makeRotationY / applyAxisAngle((0,1,0), angle) と同じ向き。
+ * 多角形の頂点の並び(光が走る向き)と、カメラが回る向きの両方にこれを使い、向きを揃える
+ * @returns {{x:number, y:number, z:number}}
  */
-export function orbitFitDistance(radius, fovDeg, aspect, margin) {
-  const halfV = (fovDeg * Math.PI) / 360
-  const halfH = Math.atan(Math.tan(halfV) * aspect)
-  const half = Math.min(halfV, halfH)
-  return (radius / Math.sin(half)) * margin
+export function rotateY(v, angle) {
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  return { x: c * v.x + s * v.z, y: v.y, z: -s * v.x + c * v.z }
+}
+
+/**
+ * 正多角形の頂点(経路の順)。center を中心とする水平な面(y = center.y)の上に置く。
+ * 頂点 j+1 は頂点 j を +2π/n だけ rotateY した位置(カメラも同じ +の向きに回る)。
+ * 最後の頂点(今の中心)が front の向き(カメラのいる側)に来るように回しておく(今いる記事を手前に見せる)
+ * @param {number} n 頂点の数(輪の長さ)
+ * @param {{x:number,y:number,z:number}} center
+ * @param {{x:number,z:number}} front 水平な面の上での、中心からカメラへの向き(長さは問わない)
+ * @param {number} radius
+ */
+export function polygonVertices(n, center, front, radius) {
+  const len = Math.hypot(front.x, front.z) || 1
+  const f = { x: (front.x / len) * radius, y: 0, z: (front.z / len) * radius }
+  const out = []
+  for (let j = 0; j < n; j++) {
+    const v = rotateY(f, (2 * Math.PI * (j - (n - 1))) / n)
+    out.push({ x: center.x + v.x, y: center.y, z: center.z + v.z })
+  }
+  return out
+}
+
+/**
+ * 力学の状態(全ノードの位置と速度・alpha)を記録する。数値はそのまま持つ(丸めない)。
+ * 戻すと、並べ替えをしなかった場合と同じ状態から力学を続けられる
+ * @param {Map<string, {x,y,z,vx,vy,vz}>} nodes
+ */
+export function snapshotLayout(nodes, alpha) {
+  const pos = new Map()
+  for (const [id, n] of nodes) pos.set(id, [n.x, n.y, n.z, n.vx, n.vy, n.vz])
+  return { pos, alpha }
+}
+
+/**
+ * 記録した状態へ戻す(補間しない)。記録の後に増えたノードはそのまま(演出中は顔ぶれが変わらないので、ふつうは無い)。
+ * @returns {number} 記録した alpha
+ */
+export function restoreLayout(nodes, snap) {
+  for (const [id, n] of nodes) {
+    const p = snap.pos.get(id)
+    if (!p) continue
+    n.x = p[0]
+    n.y = p[1]
+    n.z = p[2]
+    n.vx = p[3]
+    n.vy = p[4]
+    n.vz = p[5]
+  }
+  return snap.alpha
+}
+
+/**
+ * 多角形を見下ろすカメラの距離。重心を注視し、見下ろす角度 elevDeg で縦軸の周りに一周しても、
+ * 半径 radius の多角形の頂点と、頂点の横に出るラベル(幅 labelW・高さ labelH px)が、
+ * 画面 width×height の端から pad 内側に収まる最小の距離(遠近を含めて投影して確かめる)。
+ * ただし重心の深さで見た半径が maxPx を超えない距離より近づかない。
+ *
+ * 一周するので、頂点は重心の周りのあらゆる向き(psi)に来る。psi を細かく刻んで確かめる。
+ * カメラから見た点(カメラは面の上 elev の向き、距離 D):
+ *   深さ = D − R cos(psi) cos(elev)、横 = R sin(psi)、縦 = −R cos(psi) sin(elev)
+ * ラベルは右か左のどちらかに出るので、横は「中心からの距離 + ラベルの幅」が画面の半分に入ることを求める(左右どちらに出ても収まる)
+ * @param {number} fovDeg 縦の画角(度)
+ */
+export function polygonFitDistance(radius, elevDeg, fovDeg, width, height, labelW, labelH, { pad, maxPx, nodeGap = 16 }) {
+  const el = (elevDeg * Math.PI) / 180
+  const focal = height / 2 / Math.tan((fovDeg * Math.PI) / 360) // 深さ 1 での 1 ワールド単位の px
+  const fits = (D) => {
+    for (let k = 0; k < 72; k++) {
+      const psi = (k / 72) * Math.PI * 2
+      const depth = D - radius * Math.cos(psi) * Math.cos(el)
+      if (depth <= 0) return false
+      const sx = (radius * Math.sin(psi) * focal) / depth
+      const sy = (radius * Math.cos(psi) * Math.sin(el) * focal) / depth
+      if (Math.abs(sx) + nodeGap + labelW > width / 2 - pad) return false
+      if (Math.abs(sy) + labelH / 2 > height / 2 - pad) return false
+    }
+    return true
+  }
+  // 大きな画面で広がりすぎない距離(重心の深さで半径が maxPx)
+  const minByMax = (radius * focal) / maxPx
+  let lo = radius * 1.01
+  let hi = Math.max(minByMax, radius * 2)
+  for (let i = 0; i < 60 && !fits(hi); i++) hi *= 2
+  if (!fits(hi)) return Math.max(hi, minByMax) // 画面が小さすぎてラベルが入らないときは、いちばん引いた距離
+  for (let i = 0; i < 50; i++) {
+    const mid = (lo + hi) / 2
+    if (fits(mid)) hi = mid
+    else lo = mid
+  }
+  return Math.max(hi, minByMax)
 }

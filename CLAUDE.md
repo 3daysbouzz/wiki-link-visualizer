@@ -79,7 +79,7 @@ tests/                        node:test のユニットテスト(API のエラ�
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
 `src/utils/depthFade.js`(ラベルの深さフェードの計算)は SPEC 6.3。
-`src/utils/eggMotion.js`(輪の演出の時間割・光の明るさ・カメラワークの距離。タスク10)は SPEC 6.11。
+`src/utils/eggMotion.js`(輪の演出の時間割・光の明るさ・輪を並べ替える正多角形とカメラの距離・力学の状態の記録と復元。タスク10)は SPEC 6.11。
 `src/utils/buildGraph.js`(trail からグラフを組み立てる)は SPEC 7章、
 `src/utils/relation.js`(関連の強さを配置と動きで見せる計算・到着時の強調の対象。rev3・rev4)は SPEC 6.9・6.10、
 同じファイルの輪の判定・輪の候補・輪の色(`detectLoop`・`loopCandidates`・`eggColorFor`。タスク10)は SPEC 6.11。
