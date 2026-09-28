@@ -22,6 +22,7 @@ import { seededRandom } from '../utils/prng.js'
 import {
   arrivalHighlightSet,
   trailTier,
+  loopCandidateSteps,
 } from '../utils/relation.js'
 import { buildSim, settleSim } from '../utils/forceLayout.js'
 import { cameraFitFor } from '../utils/cameraFit.js'
@@ -224,7 +225,7 @@ export async function runMeasure(options = {}, { onProgress = () => {} } = {}) {
           missing
         )
       }
-      const m10 = loopCandidates(trail, expansions)
+      const m10 = loopCandidateSteps(trail, expansions)
 
       for (const { name, config } of group) {
         const pi = named.findIndex((n) => n.name === name)
@@ -337,25 +338,6 @@ export function truncatedExpansions(given, config, reference, allow) {
     out.set(title, links.slice(0, config.neighborLimit))
   }
   return out
-}
-
-/**
- * M10 輪を閉じられる候補の数(タスク09。10 の演出の起きやすさの目安)。
- * 経路の各時点(3件目以降)で、今の中心の子のうち、2つ以上前に通った記事の数
- * @returns {{perStep:{at:string, count:number, titles:string[]}[], total:number, max:number}}
- */
-export function loopCandidates(trail, expansions) {
-  const perStep = []
-  for (let k = 2; k < trail.length; k++) {
-    const earlier = new Set(trail.slice(0, k - 1))
-    const titles = (expansions.get(trail[k]) || []).map((l) => l.title).filter((t) => earlier.has(t))
-    perStep.push({ at: trail[k], count: titles.length, titles })
-  }
-  return {
-    perStep,
-    total: perStep.reduce((sum, p) => sum + p.count, 0),
-    max: perStep.reduce((m, p) => Math.max(m, p.count), 0),
-  }
 }
 
 const FIT_STEP = Math.round((INITIAL_FIT_DELAY_MS / 1000) * SIM_STEPS_PER_SEC)

@@ -8,8 +8,10 @@
  *   - データパケットを流す経路(packetRoutesFor)
  *   - 中心同士の距離の段階(trailTier・trailTierLength。rev4)
  *   - 到着時の共通ワード強調の対象(arrivalHighlightSet)と、始めるかの判定(startsArrival)。SPEC 6.10
+ *   - 輪を閉じたときの演出(タスク10。SPEC 6.11): 輪の判定(detectLoop)・輪の経路(loopRoute)・
+ *     輪の候補(loopCandidates)・経路の各時点の候補の数(loopCandidateSteps。measure() の M10)・輪の色(eggColorFor)
  */
-import { TRAIL_TIER_FEW_MAX, TRAIL_TIER_MID_MAX } from '../constants.js'
+import { TRAIL_TIER_FEW_MAX, TRAIL_TIER_MID_MAX, EGG_COLORS } from '../constants.js'
 
 const clamp01 = (x) => Math.min(Math.max(x, 0), 1)
 const lerp = (a, b, t) => a + (b - a) * t
@@ -221,4 +223,85 @@ export function startsArrival(prevTrail, nextTrail) {
     if (prevTrail[i] !== nextTrail[i]) return false
   }
   return !prevTrail.includes(nextTrail[nextTrail.length - 1])
+}
+
+// ==========================================================================
+// 輪を閉じたときの演出(タスク10。SPEC 6.11)
+//
+// 輪 = 経路 shown の i 番目の記事から今の中心(末尾)までの並びに、今の中心 → i 番目の記事の子の線を加えた閉じた経路。
+// 輪の長さ = 輪に含まれる中心の数(末尾の位置 − i + 1)。長さ2(A → B → A)は多角形にならないので輪にしない。
+// shown は画面に出している経路(trailEnabled=false なら今の中心だけ = 輪は起きない)
+// ==========================================================================
+
+/** 輪にする最短の長さ(中心の数)。2件の往復は輪にしない(2026-09-26 利用者と合意) */
+const LOOP_MIN = 3
+
+/**
+ * clickedId をクリックしたら輪が閉じるか。閉じるなら輪の長さ、閉じないなら 0。
+ * clickedId が経路の中にあり、今の中心の子(expansions)であり、長さが3以上のときだけ輪とする。
+ * どの操作で呼ぶか(ノードとサイドバーの隣接記事のクリックだけ。パンくず・Backspace では呼ばない)は App が決める
+ *
+ * @param {string[]} shown
+ * @param {Map<string, {title:string}[]>} expansions
+ * @param {string} clickedId
+ */
+export function detectLoop(shown, expansions, clickedId) {
+  const last = shown.length - 1
+  const i = shown.indexOf(clickedId)
+  if (i < 0 || last - i + 1 < LOOP_MIN) return 0
+  const children = expansions.get(shown[last]) || []
+  if (!children.some((l) => l.title === clickedId)) return 0
+  return last - i + 1
+}
+
+/**
+ * 長さ length の輪の中心の並び。戻り先 → … → 今の中心 の順(光はこの順に進み、最後に戻り先へ戻る)
+ * @returns {string[]}
+ */
+export function loopRoute(shown, length) {
+  return shown.slice(shown.length - length)
+}
+
+/**
+ * 輪の候補: 今の中心の子のうち、経路の中で2つ以上前にある記事(クリックすれば長さ3以上の輪になる記事)。
+ * 1つ前の中心は含めない(長さ2)。並びは今の中心の展開結果の順(= 関連スコアの順)
+ * @returns {string[]}
+ */
+export function loopCandidates(shown, expansions) {
+  if (shown.length < LOOP_MIN) return []
+  const earlier = new Set(shown.slice(0, shown.length - 2))
+  const out = []
+  for (const { title } of expansions.get(shown[shown.length - 1]) || []) {
+    if (earlier.has(title) && !out.includes(title)) out.push(title)
+  }
+  return out
+}
+
+/**
+ * M10 輪を閉じられる候補の数(タスク09。measure() が使う)。経路の各時点(3件目以降)で loopCandidates を数える。
+ * 表示の合図と同じ関数を呼ぶ(測定側に計算を写さない)
+ * @returns {{perStep:{at:string, count:number, titles:string[]}[], total:number, max:number}}
+ */
+export function loopCandidateSteps(trail, expansions) {
+  const perStep = []
+  for (let k = LOOP_MIN - 1; k < trail.length; k++) {
+    const titles = loopCandidates(trail.slice(0, k + 1), expansions)
+    perStep.push({ at: trail[k], count: titles.length, titles })
+  }
+  return {
+    perStep,
+    total: perStep.reduce((sum, p) => sum + p.count, 0),
+    max: perStep.reduce((m, p) => Math.max(m, p.count), 0),
+  }
+}
+
+/**
+ * 輪の長さに応じた色(constants.js の EGG_COLORS)。最も長い色より長い輪は、その色のまま
+ * (色を一方向に進めた先で止める。折り返すと「長いほど先の色」が崩れるため)
+ * @returns {string} '#rrggbb'
+ */
+export function eggColorFor(length) {
+  const lengths = Object.keys(EGG_COLORS).map(Number).sort((a, b) => a - b)
+  const n = Math.min(Math.max(length, lengths[0]), lengths[lengths.length - 1])
+  return EGG_COLORS[n]
 }

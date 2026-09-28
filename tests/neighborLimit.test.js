@@ -10,7 +10,9 @@ import fs from 'node:fs'
 import { pickLinks } from '../src/api/wikipedia.js'
 import { seededRandom } from '../src/utils/prng.js'
 import { assertSameRanking } from '../src/utils/screenMetrics.js'
-import { groupByRanking, truncatedExpansions, loopCandidates, rankingKeyOf } from '../src/debug/measure.js'
+import { groupByRanking, truncatedExpansions, rankingKeyOf } from '../src/debug/measure.js'
+// M10 の計算は表示の合図と同じ関数を呼ぶよう、タスク10 で relation.js に移した
+import { loopCandidateSteps } from '../src/utils/relation.js'
 import { PRESETS } from '../src/config/presets.ts'
 import { GUARANTEED_TOP } from '../src/constants.js'
 
@@ -68,21 +70,21 @@ describe('順位付けに効く値が違う変種(allowDifferentRanking)', () =>
   })
 })
 
-describe('M10 輪を閉じられる候補(loopCandidates)', () => {
+describe('M10 輪を閉じられる候補(loopCandidateSteps)', () => {
   test('3件目以降の各時点で、今の中心の子のうち2つ以上前に通った記事を数える', () => {
     const trail = ['A', 'B', 'C', 'D']
     const expansions = new Map([
       ['C', [{ title: 'A' }, { title: 'B' }, { title: 'x' }]], // B は1つ前なので数えない
       ['D', [{ title: 'A' }, { title: 'B' }, { title: 'C' }]], // C は1つ前なので数えない
     ])
-    const m = loopCandidates(trail, expansions)
+    const m = loopCandidateSteps(trail, expansions)
     assert.deepEqual(m.perStep.map((p) => [p.at, p.count]), [['C', 1], ['D', 2]])
     assert.equal(m.total, 3)
     assert.equal(m.max, 2)
   })
 
   test('中心が2件以下なら候補は無い', () => {
-    assert.deepEqual(loopCandidates(['A', 'B'], new Map()), { perStep: [], total: 0, max: 0 })
+    assert.deepEqual(loopCandidateSteps(['A', 'B'], new Map()), { perStep: [], total: 0, max: 0 })
   })
 })
 

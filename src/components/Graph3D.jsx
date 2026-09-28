@@ -10,6 +10,7 @@ import {
   selectLabels,
   focusForHover,
   focusForArrival,
+  focusForLoop,
   labelDisplayText,
   labelFont,
   labelTextureSize,
@@ -70,12 +71,23 @@ import {
   CAMERA_START_DISTANCE,
   LABEL_SWAP_S,
   LABEL_SWAP_RISE_PX,
+  EGG_IN_MS,
+  EGG_LAP_MS,
+  EGG_OUT_MS,
+  EGG_REDUCED_HOLD_MS,
+  EGG_EDGE_LIT,
+  EGG_FIT_MAX_RATIO,
+  EGG_FIT_PAD_PX,
+  EGG_FIT_MS,
+  EGG_HINT_PERIOD_S,
+  EGG_HINT_MIN,
 } from '../constants.js'
 import { PRESETS, LAYOUT_KEYS, VISUAL_KEYS } from '../config/presets.ts'
 import { isMobileViewport } from '../utils/layoutMode.js'
 import {
   computeEdgeSpringLength,
   computeEdgeSpringK,
+  eggColorFor,
 } from '../utils/relation.js'
 
 /**
@@ -88,12 +100,13 @@ import {
  *   overrides でのバージョン固定は下位依存の緩い指定(^1.29等)により
  *   効かず、根本対応として依存そのものを撤廃した。
  *
- * 表示の約束事(色は使わず、白の大きさ・線種・不透明度だけで表す):
+ * 表示の約束事(色は使わず、白の大きさ・線種・不透明度だけで表す。例外は輪を閉じたときの演出の中だけ。SPEC 6.11):
  *   大きさ   = 現在地からの距離(起点 > 一次 > 二次)。一次の中だけ閲覧数で幅を持たせる
  *   塗り/中空 = 未訪問は白塗り、訪問済み(軌跡上)は白い輪郭だけ
  *   線種     = 起点につながる線は実線、それ以外は破線
  *   不透明度 = 奥のもの(二次)ほど薄い
- *   脈動     = 未使用(予約。タスク09 で「輪を閉じられる記事の合図」に使う予定)
+ *   大きさの脈動 = 取得中のノード
+ *   明るさの脈動 = 輪を閉じられる記事(輪の候補)の合図(タスク10)
  *
  * ノードとラベルは Sprite(sizeAttenuation:false)で描く。
  * こうするとカメラ距離に関係なく画面上のピクセル数で大きさを決められるので、
@@ -130,6 +143,7 @@ const _v3 = new THREE.Vector3()
 const _forward = new THREE.Vector3()
 const _screen = {}
 const _color = new THREE.Color()
+const WHITE = new THREE.Color(0xffffff)
 const LABEL_BASE_COLOR = new THREE.Color(LABEL_COLOR)
 const LABEL_HOVER_COLOR_OBJ = new THREE.Color(LABEL_HOVER_COLOR)
 
@@ -224,7 +238,7 @@ function displayPosition(ctx, node, out) {
 }
 
 const Graph3D = forwardRef(function Graph3D(
-  { graphData, onNodeClick, onNodeHover, onArrivalChange, currentId, loadingId, packetRoutes, seed = 1, config },
+  { graphData, onNodeClick, onNodeHover, onArrivalChange, currentId, loadingId, packetRoutes, loopHints, seed = 1, config },
   ref
 ) {
   const containerRef = useRef(null)
@@ -333,6 +347,9 @@ const Graph3D = forwardRef(function Graph3D(
     })
     const edgeSolid = makeEdgeMesh(solidMaterial)
     const edgeDashed = makeEdgeMesh(dashedMaterial)
+    // 輪の演出で、グラフに無い線を描くためのもの(window.__viz.egg(n) で輪がないときだけ使う。
+    // 実際の輪は線がすべてグラフにあるので空のまま)。破線と同じ描き方にする
+    const edgeEgg = makeEdgeMesh(dashedMaterial)
 
     // ---- 起点の外周リング ----
     const ringMaterial = new THREE.SpriteMaterial({
@@ -424,6 +441,7 @@ const Graph3D = forwardRef(function Graph3D(
       ringTexture,
       edgeSolid,
       edgeDashed,
+      edgeEgg,
       solidMaterial,
       dashedMaterial,
       ring,
@@ -487,6 +505,14 @@ const Graph3D = forwardRef(function Graph3D(
       reducedMotion: false,
       // 到着時の強調の開始・終了を App に知らせる(ステータス行に共通ワードの件数を出すため)
       arrivalHandlerRef,
+      // 輪を閉じたときの演出(SPEC 6.11)。演出中の状態(playLoop で作る)/ null。
+      // 到着時の強調・ホバーより優先する注目状態
+      egg: null,
+      // 輪の候補(明るさの脈動で合図する記事)と、合図を始めた時刻(秒。止めている間は null)
+      loopHints: new Set(),
+      hintStart: null,
+      // 輪全体が画面に収まるかを確かめるための、表示と同じ画角のカメラ(演出の開始時だけ使う)
+      fitCamera: camera.clone(),
     }
     ctxRef.current = ctx
 
@@ -504,14 +530,19 @@ const Graph3D = forwardRef(function Graph3D(
     // 手動でカメラを操作したら追従をやめる(勝手に動くと操作を奪われて不快)
     // 到着時の強調も同じ理由で打ち切る(移動中なら、着いてから始める予定も取り消す)
     const onControlsStart = () => {
+      // 輪の演出中なら早送りで終える(操作を奪ったままにしない。終わると App が戻る処理を行う)
+      finishLoop(ctx)
       ctx.followId = null
       if (ctx.travel) ctx.travel.arrival = null
       cancelArrival(ctx)
     }
     controls.addEventListener('start', onControlsStart)
 
-    // キー操作(Backspace で戻るなど)でも強調を打ち切る。操作を奪わないため
-    const onKeyDown = () => cancelArrival(ctx)
+    // キー操作(Backspace で戻るなど)でも強調を打ち切り、輪の演出は早送りで終える。操作を奪わないため
+    const onKeyDown = () => {
+      finishLoop(ctx)
+      cancelArrival(ctx)
+    }
     window.addEventListener('keydown', onKeyDown)
 
     // ---- リサイズ対応 ----
@@ -714,6 +745,7 @@ const Graph3D = forwardRef(function Graph3D(
       updateTween(ctx)
       updateFollow(ctx)
       updateArrival(ctx, now)
+      updateLoop(ctx, now)
       controls.update()
 
       // ラベルの表示判定は毎フレームやると重いので間隔を空ける
@@ -758,6 +790,7 @@ const Graph3D = forwardRef(function Graph3D(
       ringMaterial.dispose()
       edgeSolid.geometry.dispose()
       edgeDashed.geometry.dispose()
+      edgeEgg.geometry.dispose()
       solidMaterial.dispose()
       dashedMaterial.dispose()
       renderer.dispose()
@@ -789,6 +822,12 @@ const Graph3D = forwardRef(function Graph3D(
     const ctx = ctxRef.current
     if (ctx) ctx.packetRoutes = packetRoutes || []
   }, [packetRoutes])
+
+  // 輪の候補(SPEC 6.11)。明るさだけを脈打たせる(updateVisuals)
+  useEffect(() => {
+    const ctx = ctxRef.current
+    if (ctx) ctx.loopHints = new Set(loopHints || [])
+  }, [loopHints])
 
   // 種が変わったら全ノードを配置し直す(比較のために「同じ配置」を作り直せるように)
   useEffect(() => {
@@ -875,6 +914,40 @@ const Graph3D = forwardRef(function Graph3D(
         shared: ctx.arrival.shared.length,
         remainingMs: Math.max(0, Math.round(ctx.arrival.until - performance.now())),
       }
+    },
+
+    /**
+     * 輪を閉じたときの演出を始める(SPEC 6.11)。route は輪の中心の並び(戻り先 → … → 今の中心)、length は輪の長さ。
+     * 終わったら(早送りを含む)onDone(true)、グラフが作り直されて中断したら onDone(false) を呼ぶ。
+     * 始められなければ false を返す(onDone は呼ばない)。
+     * allowMissing は window.__viz.egg(n) 用: グラフに無い線も描いて試せるようにする
+     */
+    playLoop({ route, length, onDone, allowMissing = false }) {
+      const ctx = ctxRef.current
+      if (!ctx) return false
+      return startLoop(ctx, { route, length, onDone, allowMissing })
+    },
+
+    /** 輪の演出の状態(デバッグ用)。演出していなければ null */
+    getLoopState() {
+      const ctx = ctxRef.current
+      if (!ctx || !ctx.egg) return null
+      const e = ctx.egg
+      return {
+        length: e.length,
+        route: e.route,
+        color: '#' + e.color.getHexString(),
+        reduced: e.reduced,
+        elapsedMs: Math.round(performance.now() - e.start),
+        totalMs: e.inMs + e.lapMs + e.outMs,
+        missingEdges: e.missing.length,
+      }
+    },
+
+    /** 輪の候補として合図している記事(デバッグ用) */
+    getLoopHints() {
+      const ctx = ctxRef.current
+      return ctx ? Array.from(ctx.loopHints) : []
     },
 
     /**
@@ -1049,6 +1122,7 @@ const Graph3D = forwardRef(function Graph3D(
     zoomBy(factor) {
       const ctx = ctxRef.current
       if (!ctx) return
+      finishLoop(ctx)
       cancelArrival(ctx)
       if (ctx.tween) return
       const target = ctx.controls.target.clone()
@@ -1281,8 +1355,13 @@ function syncGraph(ctx, graphData, currentId) {
 
   // 遷移中に目的地が消えた(再検索など)ら遷移状態を捨てる
   if (ctx.travel && !ctx.nodes.has(ctx.travel.id)) ctx.travel = null
-  // 顔ぶれが変わった(戻る・検索・リセット・追加表示)ら、到着時の強調は打ち切る
-  if (structureChanged) cancelArrival(ctx, { refresh: false })
+  // 顔ぶれが変わった(戻る・検索・リセット・追加表示)ら、到着時の強調は打ち切る。
+  // 輪の演出も中断する(線の組が変わると輪の線を描けないため)。ふつうは演出中に顔ぶれは変わらない
+  // (クリックを受け付けないので)。検索し直したときなどだけ
+  if (structureChanged) {
+    cancelArrival(ctx, { refresh: false })
+    abortLoop(ctx)
+  }
 
   applyHighlight(ctx)
   updateLabelVisibility(ctx)
@@ -1343,6 +1422,8 @@ function rebuildEdgeBuffers(ctx) {
  * クリックした直後はカーソルがそのノードに乗ったままなので、無視しないと強調がすぐ消えてしまう
  */
 function activeHoverId(ctx) {
+  // 輪の演出中はホバーを無視する(演出がいちばん優先。カーソルの下を球が通っても輪の見せ方を崩さない)
+  if (ctx.egg) return null
   const id = ctx.hoveredId && ctx.adjacency.has(ctx.hoveredId) ? ctx.hoveredId : null
   if (id && ctx.arrival && id === ctx.arrival.ignoreHover) return null
   return id
@@ -1353,6 +1434,9 @@ function applyHighlight(ctx) {
   const neighbors = hoveredId ? ctx.adjacency.get(hoveredId) : null
   const arrival = !hoveredId && ctx.arrival ? ctx.arrival : null
   const travelId = ctx.travel ? ctx.travel.id : null
+  // 輪の演出(SPEC 6.11)。輪の外をホバーと同じ比率まで落とし、色の付いた輪を読みやすくする。
+  // 消える段階(releasing)では減光も一緒に戻す
+  const egg = ctx.egg && !ctx.egg.releasing ? ctx.egg : null
 
   for (const node of ctx.nodes.values()) {
     const t = node.target
@@ -1360,7 +1444,9 @@ function applyHighlight(ctx) {
     t.labelBright = 0
     t.opacity = node.baseOpacity
 
-    if (hoveredId) {
+    if (egg) {
+      if (!egg.nodes.has(node.id)) t.opacity = node.baseOpacity * HOVER_DIM_RATIO
+    } else if (hoveredId) {
       if (node.id === hoveredId) {
         t.scale = HOVER_SCALE
         t.labelBright = 1
@@ -1383,7 +1469,9 @@ function applyHighlight(ctx) {
       ? ctx.visual.edgePrimaryOpacity
       : ctx.visual.edgeWeakOpacity
     let bright = base
-    if (hoveredId) {
+    if (egg) {
+      if (!egg.edgeIndex.has(`${link.source}->${link.target}`)) bright = base * HOVER_DIM_RATIO
+    } else if (hoveredId) {
       if (link.source === hoveredId || link.target === hoveredId) {
         bright = EDGE_HOVER_OPACITY
       } else {
@@ -1422,8 +1510,14 @@ function updateDepthFadeTargets(ctx) {
   const baseDepth = depthOf(current)
   const hoveredId = activeHoverId(ctx)
   const arrival = !hoveredId && ctx.arrival ? ctx.arrival : null
+  const egg = ctx.egg
   for (const node of ctx.nodes.values()) {
-    if (node.isCurrent || node.id === hoveredId || (arrival && arrival.labelIds.has(node.id))) {
+    if (
+      node.isCurrent ||
+      node.id === hoveredId ||
+      (egg && egg.nodes.has(node.id)) ||
+      (!egg && arrival && arrival.labelIds.has(node.id))
+    ) {
       node.labelFadeTarget = 1
     } else {
       node.labelFadeTarget = depthFadeOf(depthOf(node) - baseDepth, fadeStart, fadeEnd)
@@ -1453,6 +1547,17 @@ function updateVisuals(ctx, t, dt) {
   // 起点の呼吸(ease-in-out のループ)
   const breath = (1 - Math.cos((t / BREATH_PERIOD_S) * Math.PI * 2)) / 2
 
+  // 輪の候補の合図(SPEC 6.11)。明るさだけを EGG_HINT_PERIOD_S の周期で 1 → EGG_HINT_MIN → 1 と揺らす。
+  // 半透明にせず色を暗くする(重なったときに奥の球や線が透けて見えないように)。
+  // 到着時の強調・カメラの移動・輪の演出の間は止め、終わってから明るい側から始める(急に暗くならないように)
+  const hintOn = ctx.loopHints.size > 0 && !ctx.egg && !ctx.arrival && !ctx.travel
+  if (!hintOn) ctx.hintStart = null
+  else if (ctx.hintStart === null) ctx.hintStart = t
+  const hintDim = hintOn
+    ? 1 - (1 - EGG_HINT_MIN) * ((1 - Math.cos(((t - ctx.hintStart) / EGG_HINT_PERIOD_S) * Math.PI * 2)) / 2)
+    : 1
+  const egg = ctx.egg
+
   for (const node of ctx.nodes.values()) {
     const v = node.vis
     const g = node.target
@@ -1481,6 +1586,11 @@ function updateVisuals(ctx, t, dt) {
     const s = spriteScaleFromPx(ctx, (px * 2 * scale) / ratio)
     node.sprite.scale.set(s, s, 1)
     node.sprite.material.opacity = v.opacity
+    // 球の色。ふだんは白。輪の演出中は輪の中心だけ輪の色へ寄せ、輪の候補は明るさだけを揺らす
+    const color = node.sprite.material.color
+    if (egg && egg.nodes.has(node.id)) color.copy(WHITE).lerp(egg.color, egg.mix)
+    else if (hintDim < 1 && ctx.loopHints.has(node.id)) color.setScalar(hintDim)
+    else color.copy(WHITE)
 
     if (node.label) {
       node.label.material.color.copy(LABEL_BASE_COLOR).lerp(LABEL_HOVER_COLOR_OBJ, v.labelBright)
@@ -1578,6 +1688,7 @@ function updateShake(ctx, now) {
 // 計算済みの座標をThree.jsのオブジェクトに反映する
 // ==========================================================================
 function updatePositions(ctx) {
+  const egg = ctx.egg
   for (const node of ctx.nodes.values()) {
     displayPosition(ctx, node, _v1)
     node.sprite.position.copy(_v1)
@@ -1610,7 +1721,20 @@ function updatePositions(ctx) {
     pos[i + 3] = _v2.x
     pos[i + 4] = _v2.y
     pos[i + 5] = _v2.z
-    for (let j = 0; j < 6; j++) col[i + j] = link.bright
+    // 輪の演出中の輪の線(SPEC 6.11): 今の線の明るさに色を掛け、光が通った線は EGG_EDGE_LIT まで明るくする。
+    // 実線・破線の描き分けはそのまま(太線は使わない)。それ以外の線は白のまま明るさだけ
+    const j = egg ? egg.edgeIndex.get(`${link.source}->${link.target}`) : undefined
+    if (j !== undefined) {
+      const b = Math.max(link.bright, egg.edgeBright[j])
+      _color.copy(WHITE).lerp(egg.color, egg.mix).multiplyScalar(b)
+      for (let k = 0; k < 6; k += 3) {
+        col[i + k] = _color.r
+        col[i + k + 1] = _color.g
+        col[i + k + 2] = _color.b
+      }
+    } else {
+      for (let k = 0; k < 6; k++) col[i + k] = link.bright
+    }
     if (link.primary) si += 6
     else di += 6
   }
@@ -1620,6 +1744,35 @@ function updatePositions(ctx) {
   dashCol.needsUpdate = true
   // 破線は頂点ごとの累積距離が必要。座標が毎フレーム動くので毎回計算し直す
   if (dashPos.count > 0) ctx.edgeDashed.computeLineDistances()
+  updateLoopExtraEdges(ctx)
+}
+
+/**
+ * グラフに無い輪の線(window.__viz.egg(n) で試すときだけ)を描く。
+ * 実際の輪の線はすべてグラフにあるので、ふだんは何も描かない(バッファは空)
+ */
+function updateLoopExtraEdges(ctx) {
+  const egg = ctx.egg
+  const pos = ctx.edgeEgg.geometry.getAttribute('position')
+  const col = ctx.edgeEgg.geometry.getAttribute('color')
+  if (!egg || egg.missing.length === 0 || !pos || pos.count === 0) return
+  let i = 0
+  for (const { a, b, j } of egg.missing) {
+    const na = ctx.nodes.get(a)
+    const nb = ctx.nodes.get(b)
+    if (!na || !nb) continue
+    displayPosition(ctx, na, _v1)
+    displayPosition(ctx, nb, _v2)
+    pos.array.set([_v1.x, _v1.y, _v1.z, _v2.x, _v2.y, _v2.z], i)
+    // 破線の普段の明るさから始める(グラフにある破線と同じ見え方)
+    const bright = Math.max(ctx.visual.edgeWeakOpacity * egg.mix, egg.edgeBright[j])
+    _color.copy(WHITE).lerp(egg.color, egg.mix).multiplyScalar(bright)
+    col.array.set([_color.r, _color.g, _color.b, _color.r, _color.g, _color.b], i)
+    i += 6
+  }
+  pos.needsUpdate = true
+  col.needsUpdate = true
+  ctx.edgeEgg.computeLineDistances()
 }
 
 // ==========================================================================
@@ -1713,11 +1866,14 @@ function updatePackets(ctx, t) {
 function updateLabelVisibility(ctx) {
   const hoveredId = activeHoverId(ctx)
   // 注目状態(SPEC 6.10)。ホバーが優先、なければ到着時の強調
-  const focus = hoveredId
-    ? focusForHover(hoveredId, ctx.adjacency.get(hoveredId))
-    : ctx.arrival
-      ? focusForArrival(ctx.arrival)
-      : null
+  // 輪の演出(SPEC 6.11)がいちばん優先(演出中はホバーを無視する)
+  const focus = ctx.egg
+    ? ctx.egg.focus
+    : hoveredId
+      ? focusForHover(hoveredId, ctx.adjacency.get(hoveredId))
+      : ctx.arrival
+        ? focusForArrival(ctx.arrival)
+        : null
 
   // 追加表示で足したノードは、しばらく一次ノードより先にラベルを出す(SPEC 6.8)
   const now = performance.now()
@@ -1838,6 +1994,181 @@ function cancelArrival(ctx, { refresh = true } = {}) {
   if (!refresh) return
   applyHighlight(ctx)
   updateLabelVisibility(ctx)
+}
+
+// ==========================================================================
+// 輪を閉じたときの演出 (SPEC 6.11。タスク10)
+//
+// App が detectLoop(relation.js)で輪を見つけたら、戻る処理の前に playLoop で再生する。
+// 輪の線(経路の線と、今の中心 → 戻り先の子の線)は戻る処理で消えるので、先に見せる必要がある。
+//   IN  … 輪の線と中心の球を輪の色へ寄せ、輪の外を減光する。輪が画面に収まらなければ小さくカメラを引く
+//   LAP … 光が 戻り先 → … → 今の中心 → 戻り先 と一周する(線を順に明るくし、明るいまま残す)
+//   OUT … 色・明るさ・減光を通常に戻しながら消える
+// 終わったら onDone(true) で App に知らせ、App が今までどおりの戻る処理を行う。
+// ドラッグ・ホイール・キー・ズームボタンの操作があれば、その時点で早送りして終える(finishLoop)。
+// 色を変えるのは頂点の色(線)と SpriteMaterial.color(球)だけで、線の描き方(実線・破線)は変えない
+// ==========================================================================
+function startLoop(ctx, { route, length, onDone, allowMissing }) {
+  if (!route || route.length < 2 || !route.every((id) => ctx.nodes.has(id))) return false
+  // 輪の線: route[k] → route[k+1](最後は今の中心 → 戻り先)。j は光が通る順番
+  const edgeIndex = new Map()
+  const missing = []
+  for (let j = 0; j < route.length; j++) {
+    const a = route[j]
+    const b = route[(j + 1) % route.length]
+    if (ctx.linkByKey.has(`${a}->${b}`)) {
+      edgeIndex.set(`${a}->${b}`, j)
+      edgeIndex.set(`${b}->${a}`, j)
+    } else if (allowMissing) {
+      missing.push({ a, b, j })
+    } else {
+      return false
+    }
+  }
+  if (ctx.egg) endLoop(ctx, false)
+  cancelArrival(ctx, { refresh: false })
+
+  const reduced = ctx.reducedMotion
+  ctx.egg = {
+    route,
+    length,
+    color: new THREE.Color(eggColorFor(length)),
+    nodes: new Set(route),
+    edgeIndex,
+    // 線ごとの光の明るさ(0 〜 EGG_EDGE_LIT)。光が通るまでは 0 = 今の線の明るさのまま
+    edgeBright: new Float32Array(route.length),
+    missing,
+    focus: focusForLoop(route),
+    start: performance.now(),
+    inMs: EGG_IN_MS,
+    // 動きを減らす設定では一周させず、色を付けて保つだけにする
+    lapMs: reduced ? EGG_REDUCED_HOLD_MS : EGG_LAP_MS,
+    outMs: EGG_OUT_MS,
+    reduced,
+    // 色の付き具合(0 = 白、1 = 輪の色)
+    mix: 0,
+    releasing: false,
+    onDone,
+  }
+
+  // グラフに無い線(試すときだけ)のバッファ
+  ctx.edgeEgg.geometry.dispose()
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(missing.length * 6), 3))
+  geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(missing.length * 6), 3))
+  ctx.edgeEgg.geometry = geometry
+
+  // 輪の外の減光は IN と同じ時間で入れる
+  ctx.transitionS = reduced ? 0 : EGG_IN_MS / 1000
+  applyHighlight(ctx)
+  updateLabelVisibility(ctx)
+  fitLoopCamera(ctx, route)
+  return true
+}
+
+/** 毎フレーム: 色の付き具合と、光が一周する進み具合を決める。時間が来たら終える */
+function updateLoop(ctx, now) {
+  const e = ctx.egg
+  if (!e) return
+  const elapsed = now - e.start
+  const edges = e.edgeBright.length
+  let head
+  if (elapsed < e.inMs) {
+    e.mix = smoothstep(elapsed / e.inMs)
+    head = 0
+  } else if (elapsed < e.inMs + e.lapMs) {
+    e.mix = 1
+    head = ((elapsed - e.inMs) / e.lapMs) * edges
+  } else if (elapsed < e.inMs + e.lapMs + e.outMs) {
+    if (!e.releasing) {
+      // 消える段階: 輪の外の減光も同じ時間で戻す
+      e.releasing = true
+      ctx.transitionS = ctx.reducedMotion ? 0 : e.outMs / 1000
+      applyHighlight(ctx)
+    }
+    e.mix = 1 - smoothstep((elapsed - e.inMs - e.lapMs) / e.outMs)
+    head = edges
+  } else {
+    endLoop(ctx, true)
+    return
+  }
+  // 動きを減らす設定では、光を走らせず全部の線を色と一緒に明るくする
+  if (e.reduced) head = edges
+  for (let j = 0; j < edges; j++) {
+    // 線 j は光が来たら 1 本の長さ分かけて明るくなり、そのまま明るく残る(消える段階で色と一緒に戻る)。
+    // どの線も1回しか明るくならないので点滅にならない
+    e.edgeBright[j] = smoothstep(Math.min(Math.max(head - j, 0), 1)) * EGG_EDGE_LIT * e.mix
+  }
+}
+
+/**
+ * 演出を終える。completed=true は最後まで再生した・早送りした(App が戻る処理を行う)、
+ * false はグラフが作り直されて中断した(App は戻らない)
+ */
+function endLoop(ctx, completed) {
+  const e = ctx.egg
+  if (!e) return
+  ctx.egg = null
+  if (e.missing.length > 0) {
+    ctx.edgeEgg.geometry.dispose()
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3))
+    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3))
+    ctx.edgeEgg.geometry = geometry
+  }
+  ctx.transitionS = ctx.reducedMotion ? 0 : HOVER_TRANSITION_S
+  applyHighlight(ctx)
+  updateLabelVisibility(ctx)
+  if (e.onDone) e.onDone(completed)
+}
+
+/** 操作があったので早送りして終える(すぐ通常の表示に戻し、App に戻る処理を任せる) */
+function finishLoop(ctx) {
+  if (ctx.egg) endLoop(ctx, true)
+}
+
+/** 顔ぶれが変わったので中断する(戻る処理は行わない) */
+function abortLoop(ctx) {
+  if (ctx.egg) endLoop(ctx, false)
+}
+
+/**
+ * 輪全体が画面に収まっていなければ、収まる程度にカメラを引く(向きと注視点は変えない)。
+ * 引くのは EGG_FIT_MAX_RATIO 倍まで(小さく引くだけにする)。スマホで前の中心が画面の外に出ることがあるため
+ */
+function fitLoopCamera(ctx, route) {
+  if (ctx.tween) return
+  const el = ctx.renderer.domElement
+  const w = el.clientWidth
+  const h = el.clientHeight
+  if (!w || !h) return
+  const cam = ctx.fitCamera
+  cam.copy(ctx.camera)
+  cam.updateProjectionMatrix()
+  const target = ctx.controls.target
+  const offset = ctx.camera.position.clone().sub(target)
+  const pad = EGG_FIT_PAD_PX
+  const fits = (f) => {
+    cam.position.copy(target).addScaledVector(offset, f)
+    cam.updateMatrixWorld(true)
+    for (const id of route) {
+      const s = projectToScreen(displayPosition(ctx, ctx.nodes.get(id), _v1), cam, w, h, _screen)
+      if (!s.inFront || s.x < pad || s.x > w - pad || s.y < pad || s.y > h - pad) return false
+    }
+    return true
+  }
+  if (fits(1)) return
+  let f = 1
+  while (f < EGG_FIT_MAX_RATIO) {
+    f = Math.min(f * 1.08, EGG_FIT_MAX_RATIO)
+    if (fits(f)) break
+  }
+  startTween(ctx, {
+    endPosition: target.clone().addScaledVector(offset, f),
+    endTarget: target.clone(),
+    duration: EGG_FIT_MS,
+    ease: easeInOut,
+  })
 }
 
 // ==========================================================================

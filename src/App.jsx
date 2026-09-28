@@ -24,7 +24,14 @@ import {
 import { seededRandom } from './utils/prng.js'
 import { useLayoutMode } from './utils/layoutMode.js'
 import { buildGraph } from './utils/buildGraph.js'
-import { packetRoutesFor, arrivalHighlightSet, startsArrival } from './utils/relation.js'
+import {
+  packetRoutesFor,
+  arrivalHighlightSet,
+  startsArrival,
+  detectLoop,
+  loopRoute,
+  loopCandidates,
+} from './utils/relation.js'
 import {
   PREVIEW_DELAY_MS,
   MAX_NODES_WARN,
@@ -117,6 +124,10 @@ export default function App() {
   // クリック遷移中(カメラが飛んでいる間)の二重クリックを防ぐ
   const travelingRef = useRef(false)
   const travelTimer = useRef(null)
+  // 輪を閉じたときの演出(SPEC 6.11)を再生している間の印。演出中はクリック・戻るを受け付けない。
+  // travelingRef は TRAVEL_MS で自動的に外れるので流用しない(演出の長さは操作で変わる)。
+  // 中身は再生ごとの目印で、検索し直したら null にして、古い演出の終わりで戻らないようにする
+  const loopRef = useRef(null)
 
   // 記事id => プレビュー(REST summary) / メタ情報。同じノードに何度も乗るので都度取らない
   const previewCache = useRef(new Map())
@@ -273,6 +284,7 @@ export default function App() {
       const result = await fetchLinkedArticles(title, options)
 
       viewsSession.current += 1
+      loopRef.current = null // 演出の途中で検索し直したら、演出の後の戻る処理はしない
       expansions.current = new Map()
       moreState.current = new Map()
       viewsOf.current = new Map()
@@ -298,6 +310,7 @@ export default function App() {
   // ======================================================================
   const handleReset = useCallback(() => {
     viewsSession.current += 1
+    loopRef.current = null
     expansions.current = new Map()
     moreState.current = new Map()
     viewsOf.current = new Map()
@@ -311,7 +324,7 @@ export default function App() {
   // ======================================================================
   const jumpTo = useCallback(
     (title) => {
-      if (loading || travelingRef.current || !title) return
+      if (loading || travelingRef.current || loopRef.current || !title) return
       // 連続して呼ばれても古い trail を掴まないよう、state ではなく ref を見る
       const current = trailRef.current
       const index = current.indexOf(title)
@@ -337,7 +350,7 @@ export default function App() {
   // 結果は expansions に追記するので、戻る/進むでも消えない
   // ======================================================================
   const handleMore = useCallback(() => {
-    if (loading || travelingRef.current) return
+    if (loading || travelingRef.current || loopRef.current) return
     const trailNow = trailRef.current
     const current = trailNow[trailNow.length - 1]
     const st = current && moreState.current.get(current)
@@ -367,12 +380,37 @@ export default function App() {
   }, [loading])
 
   // ======================================================================
+  // 輪を閉じたときの演出 (SPEC 6.11)
+  // 演出を先に再生し、終わってから(早送りを含む)今までどおりの戻る処理(jumpTo)を行う。
+  // 輪の線は戻る処理で消えるので、先に見せる必要がある
+  // ======================================================================
+  const playLoopThenJump = (target, route) => {
+    const token = {}
+    loopRef.current = token
+    const started = graphRef.current?.playLoop({
+      route,
+      length: route.length,
+      onDone: (completed) => {
+        // 検索し直した・別の演出に置き換わった場合は、古い演出の終わりでは何もしない
+        if (loopRef.current !== token) return
+        // jumpTo は loopRef を見て弾くので、呼ぶ前に外す
+        loopRef.current = null
+        if (completed) jumpTo(target)
+      },
+    })
+    if (!started) {
+      loopRef.current = null
+      jumpTo(target)
+    }
+  }
+
+  // ======================================================================
   // ノードクリック: そのノードへ進む(訪問済みなら軌跡を遡る)
   // サイドバーの隣接記事リストからも同じ処理で進む
   // ======================================================================
   const handleNodeClick = useCallback(
     async (node) => {
-      if (loading || travelingRef.current) return
+      if (loading || travelingRef.current || loopRef.current) return
 
       // 現在地をクリックしたら関連記事を追加する
       const trailNow = trailRef.current
@@ -381,8 +419,22 @@ export default function App() {
         return
       }
 
-      // 既に通った記事をクリックしたら、そこまで引き返す
+      // 既に通った記事をクリックしたら、そこまで引き返す。
+      // 今の中心の子を通って2つ以上前の記事へ戻ったなら輪が閉じたので、先に演出を見せる(SPEC 6.11)。
+      // パンくず・Backspace は jumpTo を直接呼ぶので、ここを通らない(輪として数えない)
       if (trailNow.includes(node.id)) {
+        const c = configRef.current
+        const shown = c.trailEnabled ? trailNow : trailNow.slice(-1)
+        const length = c.easterEgg ? detectLoop(shown, expansions.current, node.id) : 0
+        if (length > 0) {
+          const route = loopRoute(shown, length)
+          // 試用で、実際にどのくらいの長さの輪ができているかを知るため
+          if (initialUrlState.debug) {
+            console.info('[egg] 輪を閉じた: 長さ %d / %s → %s', length, route.join(' → '), route[0])
+          }
+          playLoopThenJump(node.id, route)
+          return
+        }
         jumpTo(node.id)
         return
       }
@@ -529,6 +581,52 @@ export default function App() {
             setMeasureStatus(null)
           }
         },
+        // 輪を閉じたときの演出(SPEC 6.11)を、今の画面で長さ n の輪として試す(3〜9)。
+        // 経路の末尾 n 件(足りなければ今の中心の子で補う)を輪に見立てる。グラフに無い線は試すときだけ描く。
+        // 実際の輪ではないので、演出の後に戻る処理はしない
+        egg: (n = 3) => {
+          const length = Math.round(Number(n))
+          if (!(length >= 3)) {
+            console.warn('[egg] 輪の長さは 3 以上を指定してください')
+            return null
+          }
+          if (loopRef.current || travelingRef.current) {
+            console.warn('[egg] 演出中・移動中は試せません')
+            return null
+          }
+          const c = configRef.current
+          const shown = c.trailEnabled ? trailRef.current : trailRef.current.slice(-1)
+          if (shown.length === 0) {
+            console.warn('[egg] 先に記事を検索してください')
+            return null
+          }
+          const tail = shown.slice(-length)
+          const extra = (expansions.current.get(shown[shown.length - 1]) || [])
+            .map((l) => l.title)
+            .filter((t) => !tail.includes(t))
+            .slice(0, length - tail.length)
+          // 補う子は先頭に置く(今の中心 → 補った子 の線はグラフにあるので、輪を閉じる線が本物になる)
+          const route = [...extra, ...tail]
+          if (route.length < 3) {
+            console.warn('[egg] 輪にできる記事が足りません')
+            return null
+          }
+          const token = {}
+          loopRef.current = token
+          const started = graphRef.current?.playLoop({
+            route,
+            length,
+            allowMissing: true,
+            onDone: () => {
+              if (loopRef.current === token) loopRef.current = null
+            },
+          })
+          if (!started) loopRef.current = null
+          return started ? { length, route } : null
+        },
+        // 演出の状態と、輪の候補(明るさの脈動で合図している記事)
+        loop: () => graphRef.current?.getLoopState() || null,
+        loopHints: () => graphRef.current?.getLoopHints() || [],
         // 直前の measure() の結果
         lastMeasure: null,
         // 直前の結果を、レポートに貼れる Markdown の表にする
@@ -654,6 +752,14 @@ export default function App() {
     [trail, graphData, config.sharedPackets, config.trailEnabled]
   )
 
+  // 輪の候補(SPEC 6.11)。今の中心の子のうち、2つ以上前に通った記事。明るさの脈動で合図する
+  const loopHints = useMemo(() => {
+    if (!config.easterEgg) return []
+    return loopCandidates(config.trailEnabled ? trail : trail.slice(-1), expansions.current)
+    // graphData が変わるたびに(=trail が確定・追加表示するたびに)取り直す
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trail, graphData, config.easterEgg, config.trailEnabled])
+
   // サイドバーの隣接記事 = そのノードの展開結果(未展開なら null)
   const sidebarAdjacent = useMemo(() => {
     if (!sidebarId) return null
@@ -721,6 +827,7 @@ export default function App() {
             currentId={currentId}
             loadingId={loadingId}
             packetRoutes={packetRoutes}
+            loopHints={loopHints}
             seed={config.seed}
             config={config}
           />

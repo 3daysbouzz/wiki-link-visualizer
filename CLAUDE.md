@@ -74,13 +74,15 @@ src/
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
     └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける
-tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・配置の回帰・画面上の見え方の測定)
+tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・配置の回帰・画面上の見え方の測定・輪の演出)
 ```
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
 `src/utils/depthFade.js`(ラベルの深さフェードの計算)は SPEC 6.3。
 `src/utils/buildGraph.js`(trail からグラフを組み立てる)は SPEC 7章、
-`src/utils/relation.js`(関連の強さを配置と動きで見せる計算・到着時の強調の対象。rev3・rev4)は SPEC 6.9・6.10。
+`src/utils/relation.js`(関連の強さを配置と動きで見せる計算・到着時の強調の対象。rev3・rev4)は SPEC 6.9・6.10、
+同じファイルの輪の判定・輪の候補・輪の色(`detectLoop`・`loopCandidates`・`eggColorFor`。タスク10)は SPEC 6.11。
+輪の候補は表示の合図と `measure()` の M10 が同じ `loopCandidates` を呼ぶ。
 `src/utils/forceLayout.js`(力学の1ステップ・初期位置・全体を収める距離)・`labelSelect.js`(ラベルの間引きの判断)・
 `screenProjection.js`(画面への投影・測定用の視点)・`nodeStyle.js`(階層と球の大きさ)は Graph3D.jsx から切り出したもので、
 **表示(Graph3D)と画面上の見え方の測定(SPEC 12.5)が同じ関数を呼ぶ。** 測定側に計算を写さないこと
@@ -116,11 +118,17 @@ tests/                        node:test のユニットテスト(API のエラ�
 - 線種 = 起点につながる線は実線、それ以外は破線
 - 不透明度 = 奥のもの(二次ノード・破線)ほど薄い
 - 現在地 = 最大の球 + 呼吸する外周リング
-- 脈動 = 未使用(予約。タスク10 で「輪を閉じられる記事の合図」に使う予定)。ほかの意味に使わない
+- 大きさの脈動 = 取得中(クリックした記事の関連記事を取りに行っている間、そのノードが脈打つ)
+- 明るさの脈動 = 輪を閉じられる記事の合図(タスク10。今の中心の子のうち、2つ以上前に通った記事)。
+  半透明にせず色を暗くして揺らす。どちらの脈動もほかの意味に使わない
   (中心同士の相互リンクの脈動はタスク07 で外した)
 
 両方に同じ意味を持たせない。大きさは**画面上のピクセル**で指定する
 (`Sprite` の `sizeAttenuation:false`。カメラ距離で見た目が変わらない)。
+
+**例外: 輪を閉じたときの演出(イースターエッグ。SPEC 6.11)の中だけは色を使う。** 輪の長さで色が一方向に進む
+(3 = 黄 → 4 = 黄緑 → 5 = 緑 → … → 9 = 青に近い色。`EGG_COLORS`)。常設の表示には使わない(2026-09-26 利用者と合意)。
+説明しない仕掛けなので、README には書かない(開発者向けの SPEC と CLAUDE.md だけに書く)。
 
 **関連記事の順位は合計スコア**(morelike の順位 + 相互リンク + 冒頭リンクの加点。SPEC 3.3)。
 重みは VizConfig の `wMorelike` / `wMutual` / `wLead`。`current` は加点なし(従来の順位)で、
@@ -190,6 +198,9 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 (開発用の道具。使い方は SPEC 12.5 の「開発用: 値を試す」)。中心同士の距離の段階は `measure({ routes: 'tiers', presets: ['rev4'] })`。
 候補の比較は `variants`、Wikipedia の変化に左右されない比較は保存した展開結果(`data`)で行う(SPEC 12.5)。基準値は `docs/tasks/06-report-baseline.md`、項目と決まりは SPEC 12.5。
 `[measure] …閲覧数を取れなかった記事が…` の警告が出た回は、数字が再現しないことがあるので測り直す。
+
+輪を閉じたときの演出(SPEC 6.11)は、`?debug=1` の `window.__viz.egg(n)`(n = 3〜9)で輪がなくても試せる。
+実際に輪を閉じると Console に `[egg] 輪を閉じた: 長さ N / 顔ぶれ` が出る(試用でどのくらいの長さの輪ができているかを知るため)。
 
 ## 説明のしかた
 

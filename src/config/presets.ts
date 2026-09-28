@@ -52,6 +52,7 @@ import {
   CAMERA_FIT,
   CAMERA_FIT_MODES,
   REV5_NEIGHBOR_LIMIT,
+  EASTER_EGG,
 } from '../constants.js'
 
 export type EdgeMode = 'radial' | 'induced'
@@ -161,6 +162,10 @@ export interface VizConfig {
   arrivalSharedFadeMs: number
   /** ラベルを保証する共通ワードの上限 */
   arrivalSharedMax: number
+
+  // --- 輪を閉じたときの演出(タスク10。SPEC 6.11)。見た目だけ ------------------
+  /** 輪を閉じたときの演出と、輪の候補の合図(明るさの脈動) */
+  easterEgg: boolean
 }
 
 /**
@@ -204,6 +209,8 @@ const RELATION_OFF = {
   sharedPackets: SHARED_PACKETS,
   trailTiered: TRAIL_TIERED,
   arrivalShared: ARRIVAL_SHARED,
+  // 輪を閉じたときの演出(タスク10)。関連の強さではないが、current・rev2・mesh・rev3 では同じく off にする
+  easterEgg: EASTER_EGG,
 }
 
 /** rev2 のラベルの深さフェード。current はオフ(従来の見た目を保つ) */
@@ -322,6 +329,7 @@ PRESETS.rev3 = {
  *     極端に差をつけると中心付近が混むため
  *   - 中心同士の距離は、相互リンクを使わず共通ワードの件数の段階で決める(trailTiered)
  *   - 最初のカメラ距離は、全体ではなく今の中心と確定枠の子(関連スコアの上位)が入る距離(cameraFit 'd'。タスク08)
+ *   - 輪を閉じたときの演出を on(タスク10。SPEC 6.11)
  * rev3 は 06 の基準値として残す(2026-09-26 利用者と合意)。既定はこれに表示件数の見直しを足した rev5(タスク09)
  */
 PRESETS.rev4 = {
@@ -332,6 +340,8 @@ PRESETS.rev4 = {
   childSpringMax: SPRING_LENGTH,
   trailTiered: true,
   cameraFit: 'd',
+  // 輪を閉じたときの演出(タスク10)。rev4 と、それを引き継ぐ rev5 で on
+  easterEgg: true,
 }
 
 /**
@@ -477,6 +487,8 @@ export const VISUAL_KEYS = [
   'arrivalSharedMs',
   'arrivalSharedFadeMs',
   'arrivalSharedMax',
+  // 輪を閉じたときの演出(タスク10。SPEC 6.11)
+  'easterEgg',
 ] as const
 
 /** デバッグパネルの relation フォルダに並べる項目(上の LAYOUT_KEYS・VISUAL_KEYS の一部) */
@@ -665,5 +677,6 @@ export function coerceConfig(
       r.arrivalSharedMax.min,
       r.arrivalSharedMax.max
     ),
+    easterEgg: bool(raw.easterEgg, base.easterEgg),
   }
 }

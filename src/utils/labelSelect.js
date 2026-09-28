@@ -256,3 +256,22 @@ export function focusForArrival(set) {
     altPlacement: true,
   }
 }
+
+/**
+ * 輪を閉じたときの演出の注目状態(タスク10。SPEC 6.11)。輪を作っている中心だけにラベルを出し、
+ * 今の中心 → 戻り先 → … の順に場所を取る(光が一周する並びを、名前でもたどれるように)。
+ * これらは深さフェードを受けず、ぶつかったら別の位置を探す(到着時の強調と同じ扱い)
+ * @param {string[]} route 輪の中心の並び(戻り先 → … → 今の中心)
+ */
+export function focusForLoop(route) {
+  const order = [route[route.length - 1], ...route.slice(0, -1)]
+  const ids = new Set(order)
+  const rank = new Map(order.map((id, i) => [id, i]))
+  return {
+    reason: 'loop',
+    ids,
+    priority: (id) => rank.get(id) ?? order.length,
+    exempt: ids,
+    altPlacement: true,
+  }
+}

@@ -448,8 +448,8 @@ describe('到着時の強調を始めるか(startsArrival)', () => {
 })
 
 describe('プリセット rev4(タスク07)', () => {
-  test('rev3 から sharedPackets・arrivalShared・子の距離・trailTiered・cameraFit(タスク08)だけが違う', () => {
-    const DIFF = ['sharedPackets', 'arrivalShared', 'childSpringMin', 'childSpringMax', 'trailTiered', 'cameraFit']
+  test('rev3 から sharedPackets・arrivalShared・子の距離・trailTiered・cameraFit(タスク08)・easterEgg(タスク10)だけが違う', () => {
+    const DIFF = ['sharedPackets', 'arrivalShared', 'childSpringMin', 'childSpringMax', 'trailTiered', 'cameraFit', 'easterEgg']
     for (const [key, v] of Object.entries(PRESETS.rev3)) {
       if (DIFF.includes(key)) continue
       assert.equal(PRESETS.rev4[key], v, `${key} が rev3 と違う`)

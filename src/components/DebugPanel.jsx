@@ -113,6 +113,13 @@ export default function DebugPanel({ presetName, config, onChange, onPreset }) {
             hint: '現在地より奥のラベルを深さに応じて薄くする',
             onChange: fromPanelOnly((v) => onChange({ labelDepthFade: v })),
           },
+          // 輪を閉じたときの演出(タスク10。SPEC 6.11)。試すだけなら window.__viz.egg(n)
+          easterEgg: {
+            value: config.easterEgg,
+            label: 'easterEgg',
+            hint: '輪を閉じたときの演出と、輪を閉じられる記事の合図',
+            onChange: fromPanelOnly((v) => onChange({ easterEgg: v })),
+          },
           fadeStart: slider('fadeStart', 'fadeStart', '薄くし始める深さの差'),
           fadeEnd: slider('fadeEnd', 'fadeEnd', '見えなくなる深さの差'),
           // 最初のカメラ距離の決め方(SPEC 4章)。次に検索・URL から開き直したときに効く
