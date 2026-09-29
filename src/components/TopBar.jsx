@@ -23,6 +23,8 @@ export default function TopBar({ onSearch, onReset, loading, stats }) {
   const debounceTimer = useRef(null)
   // 古いリクエストの結果が後から届いて新しい候補を上書きしないための連番
   const requestSeq = useRef(0)
+  // 候補取得の取り消し用。新しい入力・確定で、まだ送っていない古い取得を行列から外す
+  const suggestAbort = useRef(null)
   const formRef = useRef(null)
 
   const fmt = (n) => n.toLocaleString('en-US')
@@ -34,6 +36,7 @@ export default function TopBar({ onSearch, onReset, loading, stats }) {
     // タイマーを止め、進行中のリクエストも無効にする
     if (debounceTimer.current) clearTimeout(debounceTimer.current)
     requestSeq.current += 1
+    if (suggestAbort.current) suggestAbort.current.abort()
     setValue(t)
     setOpen(false)
     setSuggestions([])
@@ -55,7 +58,10 @@ export default function TopBar({ onSearch, onReset, loading, stats }) {
     }
     debounceTimer.current = setTimeout(async () => {
       const seq = ++requestSeq.current
-      const list = await fetchSuggestions(next, SUGGEST_LIMIT)
+      if (suggestAbort.current) suggestAbort.current.abort()
+      const controller = new AbortController()
+      suggestAbort.current = controller
+      const list = await fetchSuggestions(next, SUGGEST_LIMIT, { signal: controller.signal })
       if (seq !== requestSeq.current) return
       // null = 取得失敗。候補を消して黙る(操作は続けられる)
       if (list === null) {
@@ -104,6 +110,7 @@ export default function TopBar({ onSearch, onReset, loading, stats }) {
   useEffect(() => {
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
+      if (suggestAbort.current) suggestAbort.current.abort()
     }
   }, [])
 

@@ -8,6 +8,7 @@
  *   ?labelDepthFade=0&fadeEnd=160  … ラベルの深さフェードも同じ(6.3)
  *   ?start=流体力学&path=マグネシウム,ウラン … 探索経路(開始記事と、そこから辿った記事)
  *   ?debug=1                       … デバッグパネルを出す
+ *   ?debug=1&maxConcurrent=5       … 同時リクエスト数の上限を変える(計測用。debug のときだけ効く)
  *
  * 2つのタブで別プリセットを開いて同じ経路を並べて比較する、が狙い。
  * 経路は歩くたびに replaceState で書き換える(履歴は汚さない)。
@@ -35,7 +36,10 @@ const CONFIG_KEYS = [
   ...RANKING_KEYS,
 ]
 
-/** URL から { presetName, config, overrides, start, path, debug } を読む */
+// maxConcurrent(計測用)として受け付ける範囲
+const MAX_CONCURRENT_RANGE = [1, 16]
+
+/** URL から { presetName, config, overrides, start, path, debug, maxConcurrent } を読む */
 export function readUrlState(search = window.location.search) {
   const params = new URLSearchParams(search)
 
@@ -57,13 +61,25 @@ export function readUrlState(search = window.location.search) {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  const debug = params.get('debug') === '1'
+
+  // 同時リクエスト数の上書きは計測用なので、debug のときだけ読む(公開版の URL では効かない)
+  let maxConcurrent = null
+  if (debug && params.has('maxConcurrent')) {
+    const n = Number(params.get('maxConcurrent'))
+    const [lo, hi] = MAX_CONCURRENT_RANGE
+    if (Number.isInteger(n) && n >= lo && n <= hi) maxConcurrent = n
+    else console.warn('[config] maxConcurrent は %d〜%d の整数で指定してください', lo, hi)
+  }
+
   return {
     presetName,
     config,
     overrides: Object.keys(overrides),
     start,
     path,
-    debug: params.get('debug') === '1',
+    debug,
+    maxConcurrent,
   }
 }
 

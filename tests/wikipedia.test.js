@@ -21,8 +21,11 @@ import {
   countMoreLinks,
   moreBudget,
   fetchPageviews,
+  fetchArticleMeta,
 } from '../src/api/wikipedia.js'
-import { VIEWS_CONCURRENCY } from '../src/constants.js'
+import { fetchSummary } from '../src/api/summary.js'
+import { isCancelled } from '../src/api/requestQueue.js'
+import { MAX_CONCURRENT_REQUESTS } from '../src/constants.js'
 import { seededRandom } from '../src/utils/prng.js'
 
 // --- fetch の偽装 ------------------------------------------------------------
@@ -148,7 +151,7 @@ describe('fetchWithTimeout', () => {
         })
       })
     await assert.rejects(
-      () => fetchWithTimeout('https://example.invalid/', 30),
+      () => fetchWithTimeout('https://example.invalid/', { timeoutMs: 30 }),
       (e) => e.name === 'AbortError'
     )
   })
@@ -666,11 +669,192 @@ describe('fetchPageviews: 優先度と同時実行数', () => {
     }
     await Promise.all([lowDone, highDone])
 
-    assert.ok(maxActive <= VIEWS_CONCURRENCY, `同時実行 ${maxActive}`)
+    assert.ok(maxActive <= MAX_CONCURRENT_REQUESTS, `同時実行 ${maxActive}`)
     // 先読みが先に頼まれていても、空いた枠は表示分に先に回る
     const lastHigh = Math.max(...high.map((t) => startOrder.indexOf(t)))
     const lowStartedAfterHigh = low.filter((t) => startOrder.indexOf(t) > lastHigh).length
-    assert.ok(lowStartedAfterHigh >= low.length - VIEWS_CONCURRENCY)
+    assert.ok(lowStartedAfterHigh >= low.length - MAX_CONCURRENT_REQUESTS)
     assert.equal(startOrder.length, 20) // 同じ記事を二重に取りにいっていない
+  })
+})
+
+// --- 全通信共通の同時実行数(docs/tasks/task-concurrency-limit.md) -----------------------
+
+/**
+ * 応答を手で返す偽の fetch。送られた順に { url, release } を reqs に積み、同時実行数を数える。
+ * release(body) で 200 を返す(省略時は URL に合う最小の応答)
+ */
+function manualFetch() {
+  const state = { active: 0, maxActive: 0, reqs: [] }
+  globalThis.fetch = (url) => {
+    state.active += 1
+    state.maxActive = Math.max(state.maxActive, state.active)
+    return new Promise((resolve) => {
+      const req = {
+        url,
+        released: false,
+        release: (body = defaultBody(url)) => {
+          if (req.released) return
+          req.released = true
+          state.active -= 1
+          resolve(fakeResponse(200, body))
+        },
+      }
+      state.reqs.push(req)
+    })
+  }
+  return state
+}
+
+function defaultBody(url) {
+  if (url.includes('/pageviews/')) return { items: [{ views: 1 }] }
+  if (url.includes('/page/summary/')) return { title: 'x', extract: '' }
+  return { query: { pages: [{ title: 'x' }], searchinfo: { totalhits: 1 } } }
+}
+
+/** 待っている応答を1件ずつ返しながら、全部終わるまで回す */
+async function drain(state) {
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 0))
+    const next = state.reqs.find((r) => !r.released)
+    if (next) {
+      next.release()
+    } else {
+      // 取りこぼしが無いよう、少し待って新しい送信が無いか確かめる
+      await new Promise((r) => setTimeout(r, 5))
+      if (!state.reqs.some((r) => !r.released)) return
+    }
+  }
+}
+
+describe('全通信の同時実行数', () => {
+  test('展開・サイドバー・閲覧数・先読み・検索候補を同時に頼んでも、上限を超えない', async () => {
+    const state = manualFetch()
+    const done = Promise.all([
+      fetchArticleMeta('同時A'),
+      fetchSummary('同時A'),
+      fetchPageviews(Array.from({ length: 12 }, (_, i) => `同時表示${i}`)),
+      fetchPageviews(Array.from({ length: 8 }, (_, i) => `同時先読み${i}`), undefined, { priority: 'low' }),
+      fetchSuggestions('同時'),
+      fetchArticleMeta('同時B'),
+    ])
+    await drain(state)
+    await done
+    assert.equal(state.reqs.length, 2 + 1 + 12 + 8 + 1 + 2)
+    assert.ok(state.maxActive <= MAX_CONCURRENT_REQUESTS, `同時実行 ${state.maxActive}`)
+    assert.equal(state.maxActive, MAX_CONCURRENT_REQUESTS) // 枠は使い切っている(直列になっていない)
+  })
+
+  test('展開(high)は、先に待っていたサイドバー(mid)・先読み(low)より先に送られる', async () => {
+    const state = manualFetch()
+    // 先に枠を埋める
+    const blockers = fetchPageviews(['枠1', '枠2', '枠3'])
+    await new Promise((r) => setTimeout(r, 0))
+    assert.equal(state.reqs.length, 3)
+
+    const low = fetchPageviews(['順先読み'], undefined, { priority: 'low' })
+    const mid = fetchSummary('順サイドバー')
+    const high = fetchSuggestions('順検索') // 検索候補は high
+
+    state.reqs[0].release()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.match(state.reqs[3].url, /opensearch/)
+    state.reqs[1].release()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.match(state.reqs[4].url, /page\/summary/)
+    state.reqs[2].release()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.match(decodeURIComponent(state.reqs[5].url), /順先読み/)
+
+    await drain(state)
+    await Promise.all([blockers, low, mid, high])
+  })
+
+  test('先読みで待っていた記事が表示分になったら、優先度が上がり1回だけ取る', async () => {
+    const state = manualFetch()
+    const blockers = fetchPageviews(['昇格枠1', '昇格枠2', '昇格枠3'])
+    await new Promise((r) => setTimeout(r, 0))
+    const low = fetchPageviews(['昇格する記事'], undefined, { priority: 'low' })
+    const mid = fetchSummary('昇格サイドバー')
+    const promoted = fetchPageviews(['昇格する記事']) // 表示分(mid)。サイドバーより後に頼んだので、その後ろに並ぶ
+
+    state.reqs[0].release()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.match(state.reqs[3].url, /page\/summary/)
+    state.reqs[1].release()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.match(decodeURIComponent(state.reqs[4].url), /昇格する記事/)
+
+    await drain(state)
+    await Promise.all([blockers, low, mid, promoted])
+    const count = state.reqs.filter((r) => decodeURIComponent(r.url).includes('昇格する記事')).length
+    assert.equal(count, 1)
+  })
+
+  test('タイムアウトは行列で待っている間は進まない(送信を始めてから数える)', async () => {
+    const state = manualFetch()
+    const blockers = fetchPageviews(['待ち枠1', '待ち枠2', '待ち枠3'])
+    await new Promise((r) => setTimeout(r, 0))
+    // 30ms で打ち切る設定だが、枠が空くまで 80ms 待たされる
+    const waiting = fetchWithTimeout('https://example.invalid/wait', { timeoutMs: 30 })
+    await new Promise((r) => setTimeout(r, 80))
+    assert.equal(state.reqs.length, 3) // まだ送っていない
+    state.reqs[0].release()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.equal(state.reqs.length, 4)
+    state.reqs[3].release({ ok: 1 })
+    const res = await waiting // 打ち切られずに届く
+    assert.equal(res.status, 200)
+    assert.deepEqual(await res.json(), { ok: 1 })
+    await drain(state)
+    await blockers
+  })
+
+  test('待機中のサイドバー取得は取り消せる。取り消しは失敗として保存されない', async () => {
+    const state = manualFetch()
+    const blockers = fetchPageviews(['取消枠1', '取消枠2', '取消枠3'])
+    await new Promise((r) => setTimeout(r, 0))
+
+    const controller = new AbortController()
+    const summary = fetchSummary('取り消す記事', { signal: controller.signal })
+    const meta = fetchArticleMeta('取り消す記事', { signal: controller.signal })
+    controller.abort()
+    await assert.rejects(summary, (e) => isCancelled(e))
+    await assert.rejects(meta, (e) => isCancelled(e))
+
+    await drain(state)
+    await blockers
+    assert.equal(state.reqs.length, 3) // 取り消した分は送っていない
+
+    // 保存していないので、次に頼めば取りにいく
+    const again = manualFetch()
+    const metaAgain = fetchArticleMeta('取り消す記事')
+    await drain(again)
+    assert.equal(again.reqs.length, 2)
+    assert.equal((await metaAgain).backlinks, 1)
+  })
+
+  test('送信済みのものは取り消しても中断しない', async () => {
+    const state = manualFetch()
+    const controller = new AbortController()
+    const summary = fetchSummary('送信済み', { signal: controller.signal })
+    await new Promise((r) => setTimeout(r, 0))
+    assert.equal(state.reqs.length, 1)
+    controller.abort()
+    state.reqs[0].release({ title: '送信済み', extract: '本文' })
+    assert.equal((await summary).extract, '本文')
+  })
+
+  test('検索候補は取り消されたら null(古い入力の結果として捨てられる)', async () => {
+    const state = manualFetch()
+    const blockers = fetchPageviews(['候補枠1', '候補枠2', '候補枠3'])
+    await new Promise((r) => setTimeout(r, 0))
+    const controller = new AbortController()
+    const list = fetchSuggestions('古い入力', 8, { signal: controller.signal })
+    controller.abort()
+    assert.equal(await list, null)
+    await drain(state)
+    await blockers
+    assert.equal(state.reqs.length, 3)
   })
 })

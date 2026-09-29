@@ -283,3 +283,19 @@ describe('URL クエリでの力学パラメータの上書き', () => {
     assert.equal(s.config.damping, RANGES.damping.max)
   })
 })
+
+describe('readUrlState: maxConcurrent(計測用の同時リクエスト数)', () => {
+  test('debug のときだけ読む', () => {
+    assert.equal(readUrlState('?debug=1&maxConcurrent=8').maxConcurrent, 8)
+    assert.equal(readUrlState('?maxConcurrent=8').maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1').maxConcurrent, null)
+  })
+
+  test('範囲外・整数でない値は無視する', () => {
+    console.warn = () => {}
+    assert.equal(readUrlState('?debug=1&maxConcurrent=0').maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=99').maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=2.5').maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=abc').maxConcurrent, null)
+  })
+})

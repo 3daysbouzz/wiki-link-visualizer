@@ -96,13 +96,19 @@ export const LEAD_EXTRA_MAX = 100
 // 閲覧数を集計する日数
 export const PAGEVIEW_DAYS = 3
 
-// 閲覧数を同時に取りにいく件数。多すぎると 429(叩きすぎ)で拒否される
-export const VIEWS_CONCURRENCY = 8
+// --- 同時リクエスト数 -------------------------------------------------------
+// Wikipedia / Wikimedia へ同時に送るリクエストの上限(全通信の合計。閲覧数・展開・サイドバー・検索候補)。
+// Wikimedia の推奨(https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits)が「同時 3 以下」なので 3。
+// 3 より大きくする場合は推奨から外れることになるので、理由を docs/ に記録すること。
+// 表示が遅すぎるときは、この値を上げる前に閲覧数の件数を減らすことを先に検討する(docs/tasks/task-concurrency-limit.md)。
+// ?debug=1&maxConcurrent=N で計測用に上書きできる(公開版の挙動は変えない)
+export const MAX_CONCURRENT_REQUESTS = 3
 
 // --- 通信の打ち切り ---------------------------------------------------------
 // 1リクエストをこの時間(ms)で諦める。Wikipedia 側が応答を返さないまま
 // 止まったとき、画面が「FETCHING」のまま固まらないようにするため。
-// morelike 検索は通常 1〜3 秒なので、それより十分長く取る
+// morelike 検索は通常 1〜3 秒なので、それより十分長く取る。
+// 同時リクエスト数の行列で待っている時間は数えない(送信を始めた時点から数える)
 export const FETCH_TIMEOUT_MS = 15000
 
 // ホバーしてからプレビューを取りに行くまでの待ち時間(ms)

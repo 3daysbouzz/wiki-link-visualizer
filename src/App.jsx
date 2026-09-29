@@ -13,7 +13,9 @@ import {
   getMoreLinks,
   countMoreLinks,
   moreBudget,
+  setMaxConcurrentRequests,
 } from './api/wikipedia.js'
+import { isCancelled } from './api/requestQueue.js'
 import { fetchSummary } from './api/summary.js'
 import { PRESETS, coerceConfig } from './config/presets.ts'
 import {
@@ -49,6 +51,8 @@ import {
 
 // URL は起動時に一度だけ読む(経路の復元と設定の初期値に使う)
 const initialUrlState = readUrlState()
+// ?debug=1&maxConcurrent=N(計測用)。最初の通信より前に反映する
+if (initialUrlState.maxConcurrent) setMaxConcurrentRequests(initialUrlState.maxConcurrent)
 
 export default function App() {
   // 表示パラメータ(VizConfig)。URL → プリセット → 個別上書き の順で決まる
@@ -741,11 +745,21 @@ export default function App() {
     if (summary !== undefined && meta !== undefined) return
 
     const isHover = id !== currentId
+    // 別の記事へ移ったら、まだ送っていない分を取り消す(送信済みの分はそのまま届く)
+    const controller = new AbortController()
     const timer = setTimeout(async () => {
-      const [s, m] = await Promise.all([
-        summary !== undefined ? summary : fetchSummary(id),
-        meta !== undefined ? meta : fetchArticleMeta(id),
-      ])
+      let s
+      let m
+      try {
+        ;[s, m] = await Promise.all([
+          summary !== undefined ? summary : fetchSummary(id, { signal: controller.signal }),
+          meta !== undefined ? meta : fetchArticleMeta(id, { signal: controller.signal }),
+        ])
+      } catch (e) {
+        // 取り消したものは「取得しなかった」ので保存しない(次に表示するとき取り直す)
+        if (isCancelled(e)) return
+        throw e
+      }
       previewCache.current.set(id, s)
       metaCache.current.set(id, m)
       // 待っている間に別の記事へ移っていたら、この結果は捨てる(キャッシュには残す)
@@ -753,7 +767,10 @@ export default function App() {
       setSidebar({ id, summary: s, meta: m })
     }, isHover ? PREVIEW_DELAY_MS : 0)
 
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
   }, [sidebarId, currentId])
 
   // ======================================================================

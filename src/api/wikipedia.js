@@ -38,7 +38,7 @@ import {
   GUARANTEED_TOP,
   SAMPLE_BIAS,
   RELATED_LIMIT,
-  VIEWS_CONCURRENCY,
+  MAX_CONCURRENT_REQUESTS,
   FETCH_TIMEOUT_MS,
   MORELIKE_HALF_RANK,
   W_MORELIKE,
@@ -47,6 +47,7 @@ import {
   SCORE_DEBUG_ROWS,
 } from '../constants.js'
 import { normalizeScore } from '../utils/relation.js'
+import { createRequestQueue, isCancelled, CancelledError, PRIORITIES } from './requestQueue.js'
 
 const API_ENDPOINT = 'https://ja.wikipedia.org/w/api.php'
 const PAGEVIEWS_ENDPOINT =
@@ -85,20 +86,64 @@ function isExcludedTitle(title) {
 // 共通のリクエスト処理
 // ---------------------------------------------------------------------------
 
+// Wikipedia / Wikimedia への全通信が通る行列(requestQueue.js)。アプリ全体で1つ。
+// 呼び出しごとに作ると、別々の行列の分が重なって上限を超えてしまう
+const requestQueue = createRequestQueue(MAX_CONCURRENT_REQUESTS)
+
 /**
- * 時間制限付きの fetch。timeoutMs を過ぎたら AbortController で打ち切る。
- * fetch 自体には時間制限がないので、サーバーが応答を返さないまま黙ると
- * 「FETCHING」のまま永久に待ち続けてしまう。それを避けるためのもの。
- * 打ち切り・接続失敗はどちらも Error を投げる(呼び出し側で文言を決める)
+ * 同時リクエスト数の上限を変える。?debug=1&maxConcurrent=N の計測用(公開版では呼ばない)
  */
-export async function fetchWithTimeout(url, timeoutMs = FETCH_TIMEOUT_MS) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
+export function setMaxConcurrentRequests(n) {
+  requestQueue.setLimit(n)
+  console.info('[wikipedia] 同時リクエスト数の上限: %d', n)
+}
+
+/**
+ * 時間制限付きの fetch。アプリの通信はすべてここを通る(fetch を直接呼ぶのはここだけ)。
+ *
+ * - 同時リクエスト数の行列に入れ、枠が空いてから送る(MAX_CONCURRENT_REQUESTS)
+ * - timeoutMs を過ぎたら AbortController で打ち切る。数え始めるのは送信を始めたときで、
+ *   行列で待っている時間は数えない。
+ *   fetch 自体には時間制限がないので、サーバーが応答を返さないまま黙ると
+ *   「FETCHING」のまま永久に待ち続けてしまう。それを避けるためのもの
+ * - 本文を読み終えるまで枠を持つ(本文の受信中も接続は開いているため)。
+ *   そのため返すのは本文を読み込み済みの { ok, status, text(), json() }(Response ではない)
+ *
+ * 打ち切り・接続失敗はどちらも Error を投げる(呼び出し側で文言を決める)。
+ * 待機中に signal で取り消された場合は CancelledError を投げる(isCancelled で見分ける)。
+ *
+ * @param {string} url
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs]
+ * @param {'high'|'mid'|'low'} [options.priority]
+ *   high = 利用者の操作による展開・検索候補 / mid = サイドバー・表示中の閲覧数 / low = 先読み
+ * @param {AbortSignal} [options.signal] 待機中のものだけ取り消す(送信済みは中断しない)
+ * @param {object} [options.handle] 待機中に優先度を上げるためのもの(requestQueue.run を参照)
+ */
+export function fetchWithTimeout(
+  url,
+  { timeoutMs = FETCH_TIMEOUT_MS, priority = 'high', signal, handle } = {}
+) {
+  return requestQueue.run(
+    async () => {
+      // 送る直前に作る(行列で待っている間はタイムアウトを進めない)
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        const res = await fetch(url, { signal: controller.signal })
+        const text = await res.text()
+        return {
+          ok: res.ok,
+          status: res.status,
+          text: async () => text,
+          json: async () => JSON.parse(text),
+        }
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+    { priority, signal, handle }
+  )
 }
 
 /** AbortController による打ち切りかどうか(ネットワーク失敗と文言を分けるため) */
@@ -123,7 +168,12 @@ export function describeHttpError(status) {
   return `Wikipedia APIエラー: HTTP ${status}`
 }
 
-async function apiGet(params) {
+/**
+ * @param {object} params
+ * @param {{ priority?: 'high'|'mid'|'low', signal?: AbortSignal }} [queueOptions]
+ *   既定は high(利用者の操作による展開)
+ */
+async function apiGet(params, queueOptions = {}) {
   const url = `${API_ENDPOINT}?${new URLSearchParams({
     format: 'json',
     formatversion: '2',
@@ -133,8 +183,10 @@ async function apiGet(params) {
 
   let res
   try {
-    res = await fetchWithTimeout(url)
+    res = await fetchWithTimeout(url, queueOptions)
   } catch (e) {
+    // 待機中に取り消されたものは通信の失敗ではないので、そのまま伝える
+    if (isCancelled(e)) throw e
     if (isAbortError(e)) {
       throw new Error(
         `Wikipedia API の応答が ${Math.round(FETCH_TIMEOUT_MS / 1000)} 秒以内に返りませんでした。時間をおいて再試行してください`
@@ -412,12 +464,12 @@ function pageviewRange() {
 }
 
 /** 1記事分の閲覧数を取る。データが無い記事(404)は 0 とする */
-async function fetchOnePageviews(title, range) {
+async function fetchOnePageviews(title, range, queueOptions) {
   // REST API のパスでは空白をアンダースコアにし、「/」等はエスケープする
   const encoded = encodeURIComponent(title.replace(/ /g, '_'))
   const url = `${PAGEVIEWS_ENDPOINT}/${encoded}/daily/${range.start}/${range.end}`
 
-  const res = await fetchWithTimeout(url)
+  const res = await fetchWithTimeout(url, queueOptions)
   if (res.status === 404) return 0
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
@@ -429,72 +481,50 @@ async function fetchOnePageviews(title, range) {
   return total
 }
 
-// 閲覧数の取得待ちの行列。表示中のノード(high)を先に、追加表示の先読み(low)を後に取る。
-// 呼び出しごとに作業者を立てると、表示分と先読みが重なったときに同時実行数が
-// VIEWS_CONCURRENCY を超えてしまうので、行列と作業者はアプリ全体で1つにする
-const viewsQueues = { high: [], low: [] }
-// 記事名 => 取得中の job(同じ記事を二重に取りにいかないため)
+// 取得中・待機中の閲覧数。記事名 => { promise, priority, handle }(同じ記事を二重に取りにいかないため)。
+// 同時実行数の制御は全通信共通の行列(fetchWithTimeout)に任せる
 const viewsPending = new Map()
-let viewsActive = 0
 
-/** 空いている作業枠の分だけ、high → low の順に行列から取り出して取りにいく */
-function pumpViews() {
-  while (viewsActive < VIEWS_CONCURRENCY) {
-    const job = viewsQueues.high.shift() || viewsQueues.low.shift()
-    if (!job) return
-    viewsActive += 1
-    job.started = true
-    fetchOnePageviews(job.title, job.range)
-      .then((views) => {
-        viewsCache.set(job.title, views)
-        job.resolve(views)
-      })
-      .catch(() => job.resolve(null))
-      .finally(() => {
-        viewsPending.delete(job.title)
-        viewsActive -= 1
-        pumpViews()
-      })
-  }
-}
-
-/** 1記事分の取得を行列に入れる。取得中・待機中なら同じ job を使い回す */
+/** 1記事分の取得を行列に入れる。取得中・待機中なら同じものを使い回す */
 function enqueueViews(title, range, priority) {
   let job = viewsPending.get(title)
   if (job) {
-    // 先読みで待っていた記事が表示されることになったら、先頭側の行列へ移す
-    if (priority === 'high' && !job.started && job.priority === 'low') {
-      viewsQueues.low.splice(viewsQueues.low.indexOf(job), 1)
-      viewsQueues.high.push(job)
-      job.priority = 'high'
+    // 先読みで待っていた記事が表示されることになったら、優先度を上げる(送信済みなら何もしない)
+    if (PRIORITIES.indexOf(priority) < PRIORITIES.indexOf(job.priority)) {
+      job.handle.setPriority(priority)
+      job.priority = priority
     }
     return job.promise
   }
-  job = { title, range, priority, started: false }
-  job.promise = new Promise((resolve) => {
-    job.resolve = resolve
-  })
+  job = { priority, handle: {} }
+  job.promise = fetchOnePageviews(title, range, { priority, handle: job.handle })
+    .then((views) => {
+      viewsCache.set(title, views)
+      return views
+    })
+    .catch(() => null)
+    .finally(() => viewsPending.delete(title))
   viewsPending.set(title, job)
-  viewsQueues[priority].push(job)
   return job.promise
 }
 
 /**
  * 複数記事の閲覧数を取り、1件取れるごとに onEach(title, views) を呼ぶ。
  *
- * 1記事=1リクエストなので、同時実行数を VIEWS_CONCURRENCY に抑える
+ * 1記事=1リクエスト。同時実行数は全通信共通の上限(MAX_CONCURRENT_REQUESTS)に従う
  * (一度に投げすぎると 429 Too Many Requests で拒否される)。
  * 取得済みの記事は即座にキャッシュから返す。
  * 失敗した記事は無視する(閲覧数は見た目の補助なので、取れなくても散歩は続けられる)。
  *
- * priority='low' は追加表示の先読み用。表示中の取得(high)が残っている間は始めない。
+ * priority は行列の優先度。表示中のノードは既定の 'mid'(サイドバーと同じ段)、
+ * 追加表示の先読みは 'low'(表示中の取得が残っている間は始めない)。
  *
  * @param {string[]} titles
  * @param {(title:string, views:number)=>void} [onEach]
- * @param {{ priority?: 'high'|'low' }} [options]
+ * @param {{ priority?: 'mid'|'low' }} [options]
  * @returns {Promise<void>} 全件の処理が終わったら解決する
  */
-export async function fetchPageviews(titles, onEach = () => {}, { priority = 'high' } = {}) {
+export async function fetchPageviews(titles, onEach = () => {}, { priority = 'mid' } = {}) {
   const range = pageviewRange()
   const waits = []
 
@@ -511,7 +541,6 @@ export async function fetchPageviews(titles, onEach = () => {}, { priority = 'hi
   if (waits.length === 0) return
 
   const startedAt = performance.now()
-  pumpViews()
   const results = await Promise.all(waits)
   let failed = 0
   for (const { title, views } of results) {
@@ -985,14 +1014,23 @@ function formatTouched(touched) {
  *
  * 補助情報なので失敗してもエラーを投げない。取れなかった項目は null にして、
  * 表示側は「—」を出す。
+ * ただし待機中に signal で取り消されたときは CancelledError を投げ、結果を保存しない
+ * (取り消しは「取得しなかった」のであって、失敗ではないため)。
  *
+ * @param {string} title
+ * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<{ category:string|null, backlinks:number|null, updated:string|null }>}
  */
-export async function fetchArticleMeta(title) {
+export async function fetchArticleMeta(title, { signal } = {}) {
   const cached = metaCache.get(title)
   if (cached) return cached
 
   const meta = { category: null, backlinks: null, updated: null }
+  const queueOptions = { priority: 'mid', signal }
+  let cancelled = false
+  const ignore = (e) => {
+    if (isCancelled(e)) cancelled = true
+  }
 
   const infoPromise = apiGet({
     action: 'query',
@@ -1001,7 +1039,7 @@ export async function fetchArticleMeta(title) {
     clshow: '!hidden',
     cllimit: '5',
     redirects: '1',
-  })
+  }, queueOptions)
     .then((data) => {
       const page = data.query && data.query.pages && data.query.pages[0]
       if (!page || page.missing) return
@@ -1009,7 +1047,7 @@ export async function fetchArticleMeta(title) {
       if (cat && cat.title) meta.category = cat.title.replace(/^Category:/, '')
       meta.updated = formatTouched(page.touched)
     })
-    .catch(() => {})
+    .catch(ignore)
 
   const backlinksPromise = apiGet({
     action: 'query',
@@ -1019,14 +1057,15 @@ export async function fetchArticleMeta(title) {
     srlimit: '1',
     srprop: '',
     srinfo: 'totalhits',
-  })
+  }, queueOptions)
     .then((data) => {
       const info = data.query && data.query.searchinfo
       if (info && typeof info.totalhits === 'number') meta.backlinks = info.totalhits
     })
-    .catch(() => {})
+    .catch(ignore)
 
   await Promise.all([infoPromise, backlinksPromise])
+  if (cancelled) throw new CancelledError()
   metaCache.set(title, meta)
   return meta
 }
@@ -1043,10 +1082,14 @@ export async function fetchArticleMeta(title) {
  * 検索欄は前者なら「候補が見つかりません」と出し、後者なら何も出さない
  * (通信失敗のたびに「見つかりません」と出すと、記事が無いと誤解させるため)。
  * どちらの場合も操作は続けられる。
+ * 待機中に signal で取り消された場合も null(呼び出し側は古い入力の結果として捨てる)。
  *
+ * @param {string} query
+ * @param {number} [limit]
+ * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<string[] | null>}
  */
-export async function fetchSuggestions(query, limit = 8) {
+export async function fetchSuggestions(query, limit = 8, { signal } = {}) {
   const q = query.trim()
   if (!q) return []
   const url = `${API_ENDPOINT}?${new URLSearchParams({
@@ -1058,7 +1101,7 @@ export async function fetchSuggestions(query, limit = 8) {
     origin: '*',
   }).toString()}`
   try {
-    const res = await fetchWithTimeout(url)
+    const res = await fetchWithTimeout(url, { priority: 'high', signal })
     if (!res.ok) return null
     const data = await res.json()
     // opensearch の返り値は [入力, 候補配列, 説明配列, URL配列]

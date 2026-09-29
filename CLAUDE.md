@@ -66,6 +66,7 @@ src/
 │   └── walks.js              長い経路の歩き方と、輪の起きやすさの数え方(タスク11。tests/walks.test.js)
 ├── api/
 │   ├── wikipedia.js          リンク取得・関連スコア(morelike+相互リンク+冒頭リンク)・閲覧数(REST)・抽選・メタ情報・検索候補
+│   ├── requestQueue.js       全通信共通の同時リクエスト数の行列(上限3・優先度3段階・待機中の取り消し。SPEC 3.6e)
 │   └── summary.js            記事プレビュー(REST summary API)
 └── components/
     ├── Graph3D.jsx           3D描画。ハイライト・ラベル・グリッド・パケット・遷移・カメラ追従
@@ -77,7 +78,7 @@ src/
     └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける
 scripts/                      開発用の Node スクリプト。fetch-long-walks.mjs(長い経路の展開結果を一度だけ取って tests/fixtures に保存)・
                               count-long-walk-loops.mjs(保存した経路で輪の起きやすさを数える。docs/tasks/11-report-loops.md)
-tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・配置の回帰・画面上の見え方の測定・輪の演出)
+tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・全通信の同時リクエスト数の行列・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・配置の回帰・画面上の見え方の測定・輪の演出)
 ```
 
 `src/config/`(VizConfig・URL クエリ)と `src/utils/prng.js`(種付き乱数)は SPEC 12章。
