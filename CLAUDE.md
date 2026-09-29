@@ -62,7 +62,8 @@ src/
 ├── utils/                    純粋関数(下の段落)。表示と測定が同じ関数を呼ぶ
 ├── debug/
 │   ├── measure.js            画面上の見え方の測定(window.__viz.measure。SPEC 12.5)。呼ばれたときだけ読み込む
-│   └── benchRoutes.js        測る経路の一覧(行を足すだけで測れる)
+│   ├── benchRoutes.js        測る経路の一覧(行を足すだけで測れる)
+│   └── walks.js              長い経路の歩き方と、輪の起きやすさの数え方(タスク11。tests/walks.test.js)
 ├── api/
 │   ├── wikipedia.js          リンク取得・関連スコア(morelike+相互リンク+冒頭リンク)・閲覧数(REST)・抽選・メタ情報・検索候補
 │   └── summary.js            記事プレビュー(REST summary API)
@@ -74,6 +75,8 @@ src/
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
     └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける
+scripts/                      開発用の Node スクリプト。fetch-long-walks.mjs(長い経路の展開結果を一度だけ取って tests/fixtures に保存)・
+                              count-long-walk-loops.mjs(保存した経路で輪の起きやすさを数える。docs/tasks/11-report-loops.md)
 tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・配置の回帰・画面上の見え方の測定・輪の演出)
 ```
 
@@ -128,7 +131,8 @@ tests/                        node:test のユニットテスト(API のエラ�
 (`Sprite` の `sizeAttenuation:false`。カメラ距離で見た目が変わらない)。
 
 **例外: 輪を閉じたときの演出(イースターエッグ。SPEC 6.11)の中だけは色を使う。** 輪の長さで色が一方向に進む
-(3 = 黄 → 4 = 黄緑 → 5 = 緑 → … → 9 = 青に近い色。`EGG_COLORS`)。常設の表示には使わない(2026-09-26 利用者と合意)。
+(段階は4つ: 3 = 黄 → 4 = 黄緑 → 5 = 緑 → 6以上 = 青に近い色 + カメラワーク。7件以上も6件と同じ。`EGG_COLORS`。タスク11)。
+常設の表示には使わない(2026-09-26 利用者と合意)。演出の時間割は `eggTimeline`(`src/utils/eggMotion.js`)が決め、テストで確かめる。
 説明しない仕掛けなので、README には書かない(開発者向けの SPEC と CLAUDE.md だけに書く)。
 
 **関連記事の順位は合計スコア**(morelike の順位 + 相互リンク + 冒頭リンクの加点。SPEC 3.3)。
