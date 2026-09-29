@@ -922,3 +922,37 @@ describe('loadSidebarData: 取り消しと保存', () => {
     assert.ok(caches.meta.has('失敗する記事'))
   })
 })
+
+// --- 表示中の閲覧数はサイドバーの後 / 戻り値の headers ------------------------------------
+
+describe('閲覧数(views)とサイドバー(mid)の順番', () => {
+  test('表示中の閲覧数が待っていても、後から頼んだサイドバーが先に送られる', async () => {
+    const state = manualFetch()
+    const blockers = fetchPageviews(['順番枠1', '順番枠2', '順番枠3'])
+    await new Promise((r) => setTimeout(r, 0))
+    const views = fetchPageviews(Array.from({ length: 10 }, (_, i) => `順番閲覧数${i}`)) // 既定 = views
+    const sidebar = loadSidebarData('順番サイドバー', { preview: new Map(), meta: new Map() })
+    for (let i = 0; i < 3; i++) {
+      state.reqs[i].release()
+      await new Promise((r) => setTimeout(r, 0))
+    }
+    // 空いた3枠はサイドバーの3件(R2・A6・A7)に回る
+    const next3 = state.reqs.slice(3, 6).map((r) => r.url)
+    assert.equal(next3.filter((u) => u.includes('/pageviews/')).length, 0, next3.join('\n'))
+    await drain(state)
+    await Promise.all([blockers, views, sidebar])
+  })
+})
+
+describe('fetchWithTimeout: 戻り値', () => {
+  test('headers を返す(429 の Retry-After を読むため)', async () => {
+    globalThis.fetch = async () => ({
+      ...fakeResponse(429, 'Too Many Requests'),
+      headers: new Headers({ 'Retry-After': '20' }),
+    })
+    const res = await fetchWithTimeout('https://example.invalid/429')
+    assert.equal(res.status, 429)
+    assert.equal(res.headers.get('Retry-After'), '20')
+    assert.equal(await res.text(), 'Too Many Requests')
+  })
+})

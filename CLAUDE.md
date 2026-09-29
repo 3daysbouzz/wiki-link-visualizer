@@ -66,7 +66,7 @@ src/
 │   └── walks.js              長い経路の歩き方と、輪の起きやすさの数え方(タスク11。tests/walks.test.js)
 ├── api/
 │   ├── wikipedia.js          リンク取得・関連スコア(morelike+相互リンク+冒頭リンク)・閲覧数(REST)・抽選・メタ情報・検索候補
-│   ├── requestQueue.js       全通信共通の同時リクエスト数の行列(上限3・優先度3段階・待機中の取り消し。SPEC 3.6e)
+│   ├── requestQueue.js       全通信共通の同時リクエスト数の行列(上限3・優先度4段階・待機中の取り消し。SPEC 3.6e)
 │   └── summary.js            記事プレビュー(REST summary API)
 └── components/
     ├── Graph3D.jsx           3D描画。ハイライト・ラベル・グリッド・パケット・遷移・カメラ追従

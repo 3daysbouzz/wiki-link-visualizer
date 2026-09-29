@@ -147,3 +147,52 @@ describe('createRequestQueue', () => {
     await Promise.all(runs)
   })
 })
+
+describe('createRequestQueue: 表示中の閲覧数(views)はサイドバー(mid)の後', () => {
+  test('views が積まれていても、後から入れた mid(サイドバー)が先に始まる', async () => {
+    const q = createRequestQueue(1)
+    const t = tasks()
+    const runs = [q.run(t.make('枠'))]
+    for (let i = 0; i < 5; i++) runs.push(q.run(t.make(`閲覧数${i}`), { priority: 'views' }))
+    runs.push(q.run(t.make('サイドバー'), { priority: 'mid' }))
+    await t.finish('枠')
+    assert.equal(t.started.at(-1), 'サイドバー')
+    for (const n of ['サイドバー', '閲覧数0', '閲覧数1', '閲覧数2', '閲覧数3', '閲覧数4']) {
+      assert.equal(t.started.at(-1), n)
+      await t.finish(n)
+    }
+    await Promise.all(runs)
+  })
+
+  test('low(先読み)は views が残っている間は始まらない', async () => {
+    const q = createRequestQueue(1)
+    const t = tasks()
+    const runs = [q.run(t.make('枠'))]
+    runs.push(q.run(t.make('先読み'), { priority: 'low' }))
+    runs.push(q.run(t.make('閲覧数A'), { priority: 'views' }))
+    runs.push(q.run(t.make('閲覧数B'), { priority: 'views' }))
+    for (const n of ['枠', '閲覧数A', '閲覧数B', '先読み']) {
+      assert.equal(t.started.at(-1), n)
+      await t.finish(n)
+    }
+    await Promise.all(runs)
+  })
+
+  test('待機中の low を views に引き上げられる(views の最後に並ぶ)', async () => {
+    const q = createRequestQueue(1)
+    const t = tasks()
+    const handle = {}
+    const runs = [
+      q.run(t.make('枠')),
+      q.run(t.make('昇格'), { priority: 'low', handle }),
+      q.run(t.make('閲覧数'), { priority: 'views' }),
+      q.run(t.make('別の先読み'), { priority: 'low' }),
+    ]
+    handle.setPriority('views')
+    for (const n of ['枠', '閲覧数', '昇格', '別の先読み']) {
+      assert.equal(t.started.at(-1), n)
+      await t.finish(n)
+    }
+    await Promise.all(runs)
+  })
+})

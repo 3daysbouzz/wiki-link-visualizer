@@ -8,7 +8,8 @@
  *   ?labelDepthFade=0&fadeEnd=160  … ラベルの深さフェードも同じ(6.3)
  *   ?start=流体力学&path=マグネシウム,ウラン … 探索経路(開始記事と、そこから辿った記事)
  *   ?debug=1                       … デバッグパネルを出す
- *   ?debug=1&maxConcurrent=5       … 同時リクエスト数の上限を変える(計測用。debug のときだけ効く)
+ *   ?debug=1&maxConcurrent=5       … 同時リクエスト数の上限を変える(計測用。debug のときだけ効く。
+ *                                    本番ビルドでは 3 より上げられない。effectiveMaxConcurrent)
  *
  * 2つのタブで別プリセットを開いて同じ経路を並べて比較する、が狙い。
  * 経路は歩くたびに replaceState で書き換える(履歴は汚さない)。
@@ -22,6 +23,7 @@ import {
   VISUAL_KEYS,
   RANKING_KEYS,
 } from './presets.ts'
+import { MAX_CONCURRENT_REQUESTS } from '../constants.js'
 
 // URL に出す VizConfig の項目。ここに無い項目は URL から読まないし書かない
 const CONFIG_KEYS = [
@@ -38,6 +40,20 @@ const CONFIG_KEYS = [
 
 // maxConcurrent(計測用)として受け付ける範囲
 const MAX_CONCURRENT_RANGE = [1, 16]
+
+/**
+ * URL で指定された同時リクエスト数の上限(readUrlState の maxConcurrent)を、実際に使う値にする。
+ * 開発サーバーでは指定どおり(計測用に上げられる)。本番ビルドでは MAX_CONCURRENT_REQUESTS を超えさせない
+ * (?debug=1 は誰でも付けられるので、共有 URL で開いた人のブラウザが推奨の同時3本を超えて送らないように)。
+ * 下げるのは本番でも可。指定が無ければ null(既定のまま)
+ *
+ * @param {number|null} requested
+ * @param {boolean} isDev import.meta.env.DEV
+ */
+export function effectiveMaxConcurrent(requested, isDev) {
+  if (!requested) return null
+  return isDev ? requested : Math.min(requested, MAX_CONCURRENT_REQUESTS)
+}
 
 /** URL から { presetName, config, overrides, start, path, debug, maxConcurrent } を読む */
 export function readUrlState(search = window.location.search) {

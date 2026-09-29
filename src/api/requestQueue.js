@@ -8,15 +8,17 @@
  * アプリの通信はすべて fetchWithTimeout(wikipedia.js)を通るので、そこでこの行列に入れる。
  *
  * 決まり:
- *   - 優先度は3段階。high(利用者の操作による展開)→ mid(サイドバー・表示中の閲覧数)→ low(先読み)。
- *     同じ優先度の中は先に入れた順
+ *   - 優先度は4段階。high(利用者の操作による展開・検索候補)→ mid(サイドバー)
+ *     → views(表示中ノードの閲覧数)→ low(追加表示の先読み)。同じ優先度の中は先に入れた順。
+ *     サイドバーを閲覧数より先にするのは、クリック前に記事が何かを判断できることを球の大きさより優先するため
+ *     (CLAUDE.md。閲覧数は1操作で最大25件あり、同じ段だとサイドバーがその後ろに並んで遅れた)
  *   - 待っている間に取り消せる(signal)。取り消すと CancelledError で失敗する。
  *     送信済みのものは取り消さない(中断すると Wikipedia 側の処理が無駄になるだけで、枠も空かない)
  *   - task は「枠をもらってから」呼ぶ。タイムアウトの計測は task の中で始めること
  *     (待っている時間までタイムアウトに数えると、混んでいるだけで失敗する)
  */
 
-export const PRIORITIES = ['high', 'mid', 'low']
+export const PRIORITIES = ['high', 'mid', 'views', 'low']
 
 /** 待機中に取り消された呼び出しの失敗。通信の失敗ではない(キャッシュに失敗を残さないこと) */
 export class CancelledError extends Error {
@@ -37,7 +39,7 @@ export function isCancelled(e) {
 export function createRequestQueue(maxConcurrent) {
   let limit = maxConcurrent
   let active = 0
-  const waiting = { high: [], mid: [], low: [] }
+  const waiting = Object.fromEntries(PRIORITIES.map((p) => [p, []]))
 
   const next = () => {
     for (const p of PRIORITIES) {
@@ -71,7 +73,7 @@ export function createRequestQueue(maxConcurrent) {
    *
    * @param {() => Promise<any>} task
    * @param {object} [options]
-   * @param {'high'|'mid'|'low'} [options.priority]
+   * @param {'high'|'mid'|'views'|'low'} [options.priority]
    * @param {AbortSignal} [options.signal] 待機中に abort されたら取り消す(送信済みなら何もしない)
    * @param {object} [options.handle]
    *   渡すと setPriority(p) を生やす。待機中の優先度を後から上げるのに使う(開始後は何もしない)
@@ -122,7 +124,7 @@ export function createRequestQueue(maxConcurrent) {
     },
     /** 待機中の数(テスト・計測用) */
     get waiting() {
-      return waiting.high.length + waiting.mid.length + waiting.low.length
+      return PRIORITIES.reduce((sum, p) => sum + waiting[p].length, 0)
     },
   }
 }

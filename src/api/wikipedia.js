@@ -107,7 +107,8 @@ export function setMaxConcurrentRequests(n) {
  *   fetch 自体には時間制限がないので、サーバーが応答を返さないまま黙ると
  *   「FETCHING」のまま永久に待ち続けてしまう。それを避けるためのもの
  * - 本文を読み終えるまで枠を持つ(本文の受信中も接続は開いているため)。
- *   そのため返すのは本文を読み込み済みの { ok, status, text(), json() }(Response ではない)
+ *   そのため返すのは本文を読み込み済みの { ok, status, headers, text(), json() }(Response ではない)。
+ *   headers は 429 のときに Retry-After を読むためのもの(本文を読み終えた後でも使える)
  *
  * 打ち切り・接続失敗はどちらも Error を投げる(呼び出し側で文言を決める)。
  * 待機中に signal で取り消された場合は CancelledError を投げる(isCancelled で見分ける)。
@@ -115,8 +116,8 @@ export function setMaxConcurrentRequests(n) {
  * @param {string} url
  * @param {object} [options]
  * @param {number} [options.timeoutMs]
- * @param {'high'|'mid'|'low'} [options.priority]
- *   high = 利用者の操作による展開・検索候補 / mid = サイドバー・表示中の閲覧数 / low = 先読み
+ * @param {'high'|'mid'|'views'|'low'} [options.priority]
+ *   high = 利用者の操作による展開・検索候補 / mid = サイドバー / views = 表示中の閲覧数 / low = 先読み
  * @param {AbortSignal} [options.signal] 待機中のものだけ取り消す(送信済みは中断しない)
  * @param {object} [options.handle] 待機中に優先度を上げるためのもの(requestQueue.run を参照)
  */
@@ -135,6 +136,7 @@ export function fetchWithTimeout(
         return {
           ok: res.ok,
           status: res.status,
+          headers: res.headers,
           text: async () => text,
           json: async () => JSON.parse(text),
         }
@@ -170,7 +172,7 @@ export function describeHttpError(status) {
 
 /**
  * @param {object} params
- * @param {{ priority?: 'high'|'mid'|'low', signal?: AbortSignal }} [queueOptions]
+ * @param {{ priority?: 'high'|'mid'|'views'|'low', signal?: AbortSignal }} [queueOptions]
  *   既定は high(利用者の操作による展開)
  */
 async function apiGet(params, queueOptions = {}) {
@@ -516,15 +518,15 @@ function enqueueViews(title, range, priority) {
  * 取得済みの記事は即座にキャッシュから返す。
  * 失敗した記事は無視する(閲覧数は見た目の補助なので、取れなくても散歩は続けられる)。
  *
- * priority は行列の優先度。表示中のノードは既定の 'mid'(サイドバーと同じ段)、
+ * priority は行列の優先度。表示中のノードは既定の 'views'(サイドバーの後)、
  * 追加表示の先読みは 'low'(表示中の取得が残っている間は始めない)。
  *
  * @param {string[]} titles
  * @param {(title:string, views:number)=>void} [onEach]
- * @param {{ priority?: 'mid'|'low' }} [options]
+ * @param {{ priority?: 'views'|'low' }} [options]
  * @returns {Promise<void>} 全件の処理が終わったら解決する
  */
-export async function fetchPageviews(titles, onEach = () => {}, { priority = 'mid' } = {}) {
+export async function fetchPageviews(titles, onEach = () => {}, { priority = 'views' } = {}) {
   const range = pageviewRange()
   const waits = []
 

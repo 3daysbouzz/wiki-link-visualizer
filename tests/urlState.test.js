@@ -5,7 +5,7 @@
 import { test, describe, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { readUrlState } from '../src/config/urlState.js'
+import { readUrlState, effectiveMaxConcurrent } from '../src/config/urlState.js'
 import {
   coerceConfig,
   PRESETS,
@@ -15,6 +15,7 @@ import {
   DEFAULT_PRESET,
 } from '../src/config/presets.ts'
 import {
+  MAX_CONCURRENT_REQUESTS,
   REPULSION,
   REPULSION_RANGE,
   SPRING_K,
@@ -297,5 +298,22 @@ describe('readUrlState: maxConcurrent(計測用の同時リクエスト数)', ()
     assert.equal(readUrlState('?debug=1&maxConcurrent=99').maxConcurrent, null)
     assert.equal(readUrlState('?debug=1&maxConcurrent=2.5').maxConcurrent, null)
     assert.equal(readUrlState('?debug=1&maxConcurrent=abc').maxConcurrent, null)
+  })
+})
+
+describe('effectiveMaxConcurrent: 本番ビルドでは上限を上げさせない', () => {
+  test('本番ビルドでは MAX_CONCURRENT_REQUESTS に丸める(下げるのは可)', () => {
+    assert.equal(effectiveMaxConcurrent(16, false), MAX_CONCURRENT_REQUESTS)
+    assert.equal(effectiveMaxConcurrent(MAX_CONCURRENT_REQUESTS + 1, false), MAX_CONCURRENT_REQUESTS)
+    assert.equal(effectiveMaxConcurrent(1, false), 1)
+  })
+
+  test('開発サーバーでは指定どおり(計測用)', () => {
+    assert.equal(effectiveMaxConcurrent(16, true), 16)
+  })
+
+  test('指定が無ければ null(既定のまま)', () => {
+    assert.equal(effectiveMaxConcurrent(null, false), null)
+    assert.equal(effectiveMaxConcurrent(readUrlState('?maxConcurrent=16').maxConcurrent, false), null)
   })
 })

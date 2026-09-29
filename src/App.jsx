@@ -20,6 +20,7 @@ import {
   readUrlState,
   writeTrailToUrl,
   writeConfigToUrl,
+  effectiveMaxConcurrent,
 } from './config/urlState.js'
 import { seededRandom } from './utils/prng.js'
 import { useLayoutMode } from './utils/layoutMode.js'
@@ -49,8 +50,9 @@ import {
 
 // URL は起動時に一度だけ読む(経路の復元と設定の初期値に使う)
 const initialUrlState = readUrlState()
-// ?debug=1&maxConcurrent=N(計測用)。最初の通信より前に反映する
-if (initialUrlState.maxConcurrent) setMaxConcurrentRequests(initialUrlState.maxConcurrent)
+// ?debug=1&maxConcurrent=N(計測用)。最初の通信より前に反映する。本番ビルドでは既定の上限より上げない
+const maxConcurrent = effectiveMaxConcurrent(initialUrlState.maxConcurrent, import.meta.env.DEV)
+if (maxConcurrent) setMaxConcurrentRequests(maxConcurrent)
 
 export default function App() {
   // 表示パラメータ(VizConfig)。URL → プリセット → 個別上書き の順で決まる
