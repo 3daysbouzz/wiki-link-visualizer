@@ -25,6 +25,7 @@ import {
 } from '../src/api/wikipedia.js'
 import { fetchSummary } from '../src/api/summary.js'
 import { isCancelled } from '../src/api/requestQueue.js'
+import { loadSidebarData } from '../src/api/sidebarData.js'
 import { MAX_CONCURRENT_REQUESTS } from '../src/constants.js'
 import { seededRandom } from '../src/utils/prng.js'
 
@@ -684,8 +685,25 @@ describe('fetchPageviews: 優先度と同時実行数', () => {
  * 応答を手で返す偽の fetch。送られた順に { url, release } を reqs に積み、同時実行数を数える。
  * release(body) で 200 を返す(省略時は URL に合う最小の応答)
  */
+// テストが途中で失敗しても、手で返す応答を残したままにしない(全通信共通の行列の枠が
+// 埋まったままになり、後のテストが永遠に待つため)
+const openStates = []
+afterEach(async () => {
+  if (openStates.length === 0) return
+  // 残りを流す間に待機中の分が送られても、本物の通信にならないようにする
+  globalThis.fetch = async () => {
+    throw new TypeError('テストの後片付け')
+  }
+  for (const state of openStates.splice(0)) {
+    for (const req of state.reqs) req.release()
+  }
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0))
+  globalThis.fetch = realFetch
+})
+
 function manualFetch() {
   const state = { active: 0, maxActive: 0, reqs: [] }
+  openStates.push(state)
   globalThis.fetch = (url) => {
     state.active += 1
     state.maxActive = Math.max(state.maxActive, state.active)
@@ -856,5 +874,51 @@ describe('全通信の同時実行数', () => {
     await drain(state)
     await blockers
     assert.equal(state.reqs.length, 3)
+  })
+})
+
+// --- サイドバー: ホバーで取り消した記事を、あとで選んだら出る(失敗として保存しない) ------------------
+
+describe('loadSidebarData: 取り消しと保存', () => {
+  test('ホバーで通り過ぎて取り消した記事も、あとで選べばプレビューとメタ情報が出る', async () => {
+    const caches = { preview: new Map(), meta: new Map() }
+    const state = manualFetch()
+    // 表示中の閲覧数で枠が埋まっている間に、ノードAにホバーした
+    const blockers = fetchPageviews(['SB枠1', 'SB枠2', 'SB枠3'])
+    await new Promise((r) => setTimeout(r, 0))
+    const hover = new AbortController()
+    const pending = loadSidebarData('ホバーした記事', caches, { signal: hover.signal })
+    // 別のノードへ移った(App の useEffect の後片付けが abort する)
+    hover.abort()
+    assert.equal(await pending, null)
+    assert.equal(caches.preview.has('ホバーした記事'), false)
+    assert.equal(caches.meta.has('ホバーした記事'), false)
+    await drain(state)
+    await blockers
+    assert.equal(state.reqs.length, 3) // 取り消した3件(R2・A6・A7)は送っていない
+
+    // あとで同じノードを選ぶ
+    const again = manualFetch()
+    const shown = loadSidebarData('ホバーした記事', caches)
+    await new Promise((r) => setTimeout(r, 0))
+    for (const req of again.reqs) {
+      if (req.url.includes('/page/summary/')) req.release({ title: 'ホバーした記事', extract: '冒頭の文章' })
+    }
+    await drain(again)
+    const data = await shown
+    assert.equal(again.reqs.length, 3) // 取り直している
+    assert.equal(data.summary.extract, '冒頭の文章')
+    assert.equal(data.meta.backlinks, 1)
+    assert.equal(caches.preview.get('ホバーした記事').extract, '冒頭の文章')
+  })
+
+  test('本当に失敗したものは保存する(以前どおり、取り直さない)', async () => {
+    const caches = { preview: new Map(), meta: new Map() }
+    mockFetch(() => fakeResponse(500, 'error'))
+    const data = await loadSidebarData('失敗する記事', caches)
+    assert.equal(data.summary, null)
+    assert.deepEqual(data.meta, { category: null, backlinks: null, updated: null })
+    assert.equal(caches.preview.get('失敗する記事'), null)
+    assert.ok(caches.meta.has('失敗する記事'))
   })
 })

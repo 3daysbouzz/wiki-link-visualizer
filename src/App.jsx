@@ -9,14 +9,12 @@ import {
   fetchLinkedArticles,
   expandRoute,
   fetchPageviews,
-  fetchArticleMeta,
   getMoreLinks,
   countMoreLinks,
   moreBudget,
   setMaxConcurrentRequests,
 } from './api/wikipedia.js'
-import { isCancelled } from './api/requestQueue.js'
-import { fetchSummary } from './api/summary.js'
+import { loadSidebarData } from './api/sidebarData.js'
 import { PRESETS, coerceConfig } from './config/presets.ts'
 import {
   readUrlState,
@@ -748,23 +746,16 @@ export default function App() {
     // 別の記事へ移ったら、まだ送っていない分を取り消す(送信済みの分はそのまま届く)
     const controller = new AbortController()
     const timer = setTimeout(async () => {
-      let s
-      let m
-      try {
-        ;[s, m] = await Promise.all([
-          summary !== undefined ? summary : fetchSummary(id, { signal: controller.signal }),
-          meta !== undefined ? meta : fetchArticleMeta(id, { signal: controller.signal }),
-        ])
-      } catch (e) {
-        // 取り消したものは「取得しなかった」ので保存しない(次に表示するとき取り直す)
-        if (isCancelled(e)) return
-        throw e
-      }
-      previewCache.current.set(id, s)
-      metaCache.current.set(id, m)
+      // 取り消したものは「取得しなかった」ので保存されず null が返る(次に表示するとき取り直す)
+      const data = await loadSidebarData(
+        id,
+        { preview: previewCache.current, meta: metaCache.current },
+        { signal: controller.signal }
+      )
+      if (!data) return
       // 待っている間に別の記事へ移っていたら、この結果は捨てる(キャッシュには残す)
       if (sidebarIdRef.current !== id) return
-      setSidebar({ id, summary: s, meta: m })
+      setSidebar({ id, summary: data.summary, meta: data.meta })
     }, isHover ? PREVIEW_DELAY_MS : 0)
 
     return () => {
