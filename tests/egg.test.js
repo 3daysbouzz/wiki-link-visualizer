@@ -135,23 +135,31 @@ function hueOf(hex) {
   return (h * 60 + 360) % 360
 }
 
-describe('輪の色(EGG_COLORS)', () => {
-  test('3〜9 のすべてに色がある', () => {
-    for (let n = 3; n <= 9; n++) assert.match(EGG_COLORS[n], /^#[0-9a-f]{6}$/i, String(n))
+describe('輪の色(EGG_COLORS。4段階。タスク11)', () => {
+  test('3・4・5 の色は 10 のときと同じ', () => {
+    assert.equal(eggColorFor(3), '#ffe23d')
+    assert.equal(eggColorFor(4), '#b4f03c')
+    assert.equal(eggColorFor(5), '#46e664')
   })
 
-  test('長さの順に、色相が一方向に進む(黄 → 黄緑 → 緑 → … → 青に近い色)', () => {
-    const hues = [3, 4, 5, 6, 7, 8, 9].map((n) => hueOf(eggColorFor(n)))
-    for (let i = 1; i < hues.length; i++) assert.ok(hues[i] > hues[i - 1], `${i + 3}: ${hues[i]} > ${hues[i - 1]}`)
-    // 3 は黄(45〜65°)、4 は黄緑、5 は緑、9 は青に近い(200〜240°)
+  test('6・7・9・12 はすべて同じ色(10 の 9件の色 = 青に近い色)', () => {
+    for (const n of [6, 7, 9, 12]) assert.equal(eggColorFor(n), '#5a8cff', String(n))
+  })
+
+  test('段階は4つ(3・4・5・6以上)', () => {
+    assert.deepEqual(Object.keys(EGG_COLORS).map(Number), [3, 4, 5, 6])
+    assert.equal(new Set([3, 4, 5, 6, 7, 8, 9, 12].map(eggColorFor)).size, 4)
+  })
+
+  test('長さの順に、色相が一方向に進む(黄 → 黄緑 → 緑 → 青に近い色)。戻らない', () => {
+    const hues = [3, 4, 5, 6, 7, 9, 12].map((n) => hueOf(eggColorFor(n)))
+    for (let i = 1; i < hues.length; i++) assert.ok(hues[i] >= hues[i - 1], `${i}: ${hues[i]} >= ${hues[i - 1]}`)
+    for (let i = 1; i < 4; i++) assert.ok(hues[i] > hues[i - 1], `段階 ${i + 3}`)
+    // 3 は黄(45〜65°)、4 は黄緑、5 は緑、6以上は青に近い(200〜240°)
     assert.ok(hues[0] >= 45 && hues[0] <= 65, `3: ${hues[0]}`)
     assert.ok(hues[1] > 65 && hues[1] < 100, `4: ${hues[1]}`)
     assert.ok(hues[2] >= 100 && hues[2] <= 140, `5: ${hues[2]}`)
-    assert.ok(hues[6] >= 200 && hues[6] <= 240, `9: ${hues[6]}`)
-  })
-
-  test('9 より長い輪は 9 の色(折り返さない)', () => {
-    assert.equal(eggColorFor(12), EGG_COLORS[9])
+    assert.ok(hues[3] >= 200 && hues[3] <= 240, `6: ${hues[3]}`)
   })
 })
 

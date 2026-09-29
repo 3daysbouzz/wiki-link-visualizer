@@ -296,8 +296,8 @@ export function loopCandidateSteps(trail, expansions) {
 }
 
 /**
- * 輪の長さに応じた色(constants.js の EGG_COLORS)。最も長い色より長い輪は、その色のまま
- * (色を一方向に進めた先で止める。折り返すと「長いほど先の色」が崩れるため)
+ * 輪の長さに応じた色(constants.js の EGG_COLORS。4段階)。最上位の段階(6)より長い輪は、どの長さでもその色
+ * (7件以上は 6件と同じ色。長さは左上の数字で伝える。折り返すと「長いほど先の色」が崩れるため止める)
  * @returns {string} '#rrggbb'
  */
 export function eggColorFor(length) {
