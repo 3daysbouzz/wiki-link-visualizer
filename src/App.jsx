@@ -44,6 +44,7 @@ import {
   MORE_HINT_MS,
   INITIAL_FIT_DELAY_MS,
   INITIAL_FOLLOW_DELAY_MS,
+  EGG_SCAN_MS,
 } from './constants.js'
 
 // URL は起動時に一度だけ読む(経路の復元と設定の初期値に使う)
@@ -78,10 +79,34 @@ export default function App() {
         : null
     )
   }, [])
-  // 輪を閉じたときのカメラワーク(SPEC 6.11。10b)の間だけ、画面の隅に出す一行。説明ではなく端末風の記録として出す
+  // 輪を閉じたときの演出(SPEC 6.11)のうち DOM で描くもの。Graph3D が演出の開始に時間割(eggTimeline)を渡し、終わりに null を渡す。
+  //   loopBanner … 6件以上で画面の隅に出す一行 LOOP CLOSED // N NODES(説明ではなく端末風の記録)。
+  //                締めの瞬間から1文字ずつ打ち込む(動きを減らす設定では始まりから一度に出す)
+  //   loopScan   … 6件以上の締めで、白い 1px の横線が画面を上から下へ一度だけ通り過ぎる(値が変わるたびに描き直す番号)
+  // 早送り・中断で演出が終わったら、予定をすべて取り消して消す
   const [loopBanner, setLoopBanner] = useState(null)
+  const [loopScan, setLoopScan] = useState(0)
+  const loopTimers = useRef([])
   const handleLoopChange = useCallback((info) => {
-    setLoopBanner(info && info.cinematic ? `LOOP CLOSED // ${info.length} NODES` : null)
+    for (const id of loopTimers.current) clearTimeout(id)
+    loopTimers.current = []
+    setLoopBanner(null)
+    setLoopScan(0)
+    const tl = info && info.timeline
+    if (!tl) return
+    const later = (ms, fn) => loopTimers.current.push(setTimeout(fn, Math.max(0, ms)))
+    if (tl.banner !== null) {
+      const text = `LOOP CLOSED // ${info.length} NODES`
+      if (tl.typing) {
+        for (let i = 1; i <= text.length; i++) later(tl.typing.start + i * tl.typing.charMs, () => setLoopBanner(text.slice(0, i)))
+      } else {
+        later(tl.banner, () => setLoopBanner(text))
+      }
+    }
+    if (tl.scan !== null) {
+      later(tl.scan, () => setLoopScan((n) => n + 1))
+      later(tl.scan + EGG_SCAN_MS, () => setLoopScan(0))
+    }
   }, [])
   const noticeTimer = useRef(null)
   // 操作説明は初めてグラフを出したときだけ出す
@@ -637,6 +662,9 @@ export default function App() {
         // 演出の状態と、輪の候補(明るさの脈動で合図している記事)
         loop: () => graphRef.current?.getLoopState() || null,
         loopHints: () => graphRef.current?.getLoopHints() || [],
+        // 輪の演出を、始まりから ms の時点で止めて見る(驚き・リズム・締め・余韻の瞬間の確認用)。null で再開する。
+        // 止めるのは 3D の見た目だけで、左上の文字の打ち込みと走査線(DOM)は時計どおりに進む
+        eggAt: (ms) => graphRef.current?.holdLoop(ms) ?? null,
         // 直前の演出の記録。輪を並べ替えた場合(10c)、戻した後に力学の状態(全ノードの位置・速度・alpha)が
         // 演出の前と完全に同じか(identical)と、演出中に進めた力学のステップ数(stepsDuring。0 のはず)
         lastLoop: () => graphRef.current?.getLastLoop() || null,
@@ -752,6 +780,7 @@ export default function App() {
       if (crumbTimer.current) clearTimeout(crumbTimer.current)
       if (travelTimer.current) clearTimeout(travelTimer.current)
       if (noticeTimer.current) clearTimeout(noticeTimer.current)
+      for (const id of loopTimers.current) clearTimeout(id)
     }
   }, [])
 
@@ -917,6 +946,16 @@ export default function App() {
           </button>
         )}
       </div>
+
+      {/* 輪の演出の走査線(6件以上の締めで一度だけ。SPEC 6.11)。上から下へ通り過ぎる白い 1px の線 */}
+      {loopScan > 0 && (
+        <div
+          key={loopScan}
+          className="egg-scan"
+          aria-hidden="true"
+          style={{ '--egg-scan-ms': `${EGG_SCAN_MS}ms` }}
+        />
+      )}
 
       {/* スキャンライン(装飾)。操作を邪魔しないよう pointer-events は切る */}
       <div className="scanlines" aria-hidden="true" />

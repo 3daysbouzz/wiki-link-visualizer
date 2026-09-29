@@ -193,7 +193,9 @@ describe('輪を閉じた後の戻る処理', () => {
 })
 
 import {
-  eggPlan,
+  eggTimeline,
+  eggFrame,
+  eggEdgeBrightness,
   loopEdgeGlow,
   rotateY,
   polygonVertices,
@@ -207,43 +209,180 @@ import {
   EGG_CINE_ELEV_DEG,
   EGG_POLY_PAD_PX,
   EGG_POLY_MAX_PX,
+  EGG_POLY_PAD_TOP_PX,
+  EGG_POLY_PAD_BOTTOM_PX,
+  NODE_PX_CURRENT_MAX,
+  LABEL_GAP_PX,
   MEASURE_VIEWPORTS,
   LABEL_PX,
+  EGG_RIPPLE_PX,
+  EGG_RIPPLE_MS,
+  EGG_RIPPLE_MAX_PER_S,
+  EGG_RIPPLE_MAX_LIVE,
   CAMERA_FOV,
 } from '../src/constants.js'
 
-describe('演出の時間割(eggPlan。10b)', () => {
-  test('6件以上はカメラワーク、5件以下は光らせるだけ', () => {
-    for (const n of [3, 4, 5]) assert.equal(eggPlan(n, false).cinematic, false, String(n))
-    for (const n of [6, 7, 9, 12]) assert.equal(eggPlan(n, false).cinematic, true, String(n))
+describe('演出の時間割(eggTimeline。タスク11)', () => {
+  const ALL = [3, 4, 5, 6, 7, 9, 12]
+
+  test('6件以上はカメラワーク、5件以下は光らせるだけ。境目 EGG_CINEMATIC_MIN は 6 のまま', () => {
+    assert.equal(EGG_CINEMATIC_MIN, 6)
+    for (const n of [3, 4, 5]) assert.equal(eggTimeline(n, false).cinematic, false, String(n))
+    for (const n of [6, 7, 9, 12]) assert.equal(eggTimeline(n, false).cinematic, true, String(n))
   })
 
-  test('動きを減らす設定ではカメラワークを行わず、光も走らせない(3〜5件と同じ演出)', () => {
-    for (const n of [3, 6, 9]) {
-      const p = eggPlan(n, true)
-      assert.equal(p.cinematic, false, String(n))
-      assert.equal(p.reduced, true, String(n))
+  test('3〜5件の合計は 2.5秒以内、6件以上の合計は 8秒以内', () => {
+    for (const n of [3, 4, 5]) assert.ok(eggTimeline(n, false).total <= 2500, String(n))
+    for (const n of [6, 7, 9, 12]) assert.ok(eggTimeline(n, false).total <= 8000, String(n))
+  })
+
+  test('各段階は重ならずに、隙間なく並ぶ(0 から始まり total で終わる)', () => {
+    for (const reduced of [false, true]) {
+      for (const n of ALL) {
+        const tl = eggTimeline(n, reduced)
+        assert.equal(tl.phases[0].start, 0)
+        for (let i = 0; i < tl.phases.length; i++) {
+          assert.ok(tl.phases[i].end > tl.phases[i].start, `${n}: ${tl.phases[i].name}`)
+          if (i > 0) assert.equal(tl.phases[i].start, tl.phases[i - 1].end, `${n}: ${tl.phases[i].name}`)
+        }
+        assert.equal(tl.phases[tl.phases.length - 1].end, tl.total)
+      }
     }
   })
 
-  test('全体の長さの目安: 3〜5件は2秒前後、6件以上は5秒前後', () => {
-    const total = (p) => p.inMs + p.lapMs + p.outMs
-    assert.ok(Math.abs(total(eggPlan(3, false)) - 2000) <= 300)
-    assert.ok(Math.abs(total(eggPlan(6, false)) - 5000) <= 500)
-    // カメラワークでは光が輪を何周か走る
-    assert.ok(eggPlan(6, false).laps >= 2)
+  test('段階の並びは指示書 4.3 のとおり(驚き → リズム/並べ替え・溜め・一周 → 締め → 余韻)', () => {
+    assert.deepEqual(eggTimeline(3, false).phases.map((p) => p.name), ['surprise', 'rhythm', 'finale', 'afterglow'])
+    assert.deepEqual(eggTimeline(6, false).phases.map((p) => p.name), ['surprise', 'arrange', 'charge', 'orbit', 'finale', 'afterglow'])
+  })
+
+  test('6・7・9 は同じ演出(時間割が長さの数字以外すべて同じ。波紋の数は記事の数で変わる)', () => {
+    const shape = (n) => {
+      const { length, ripples, nodeLit, ...rest } = eggTimeline(n, false)
+      return rest
+    }
+    assert.deepEqual(shape(7), shape(6))
+    assert.deepEqual(shape(9), shape(6))
+  })
+
+  test('驚き: 始まりの瞬間に一瞬で色が付く(補間しない)', () => {
+    for (const n of [3, 6]) assert.equal(eggFrame(eggTimeline(n, false), 0).mix, 1, String(n))
+  })
+
+  test('締めは光が一周して戻り先に戻った瞬間(光の区間の終わり)', () => {
+    for (const n of [3, 5, 6, 9]) {
+      const tl = eggTimeline(n, false)
+      assert.equal(tl.finale, tl.light.end, String(n))
+      assert.equal(eggFrame(tl, tl.finale).head, n * tl.light.laps, String(n))
+    }
+  })
+
+  test('余韻の終わりで、色・薄さ・並べ替えはすべて元に戻っている', () => {
+    for (const n of [3, 6]) {
+      const f = eggFrame(eggTimeline(n, false), eggTimeline(n, false).total)
+      assert.equal(f.mix, 0)
+      assert.equal(f.dim, 0)
+      assert.equal(f.place, 0)
+      assert.equal(f.flash > 0.001, false)
+    }
+  })
+
+  test('6件以上: 並べ替え → 溜め(戻り先から順に灯る)→ 一周 → 余韻で元に戻す', () => {
+    const tl = eggTimeline(6, false)
+    const at = (name) => tl.phases.find((p) => p.name === name)
+    assert.equal(eggFrame(tl, at('arrange').start).place, 0)
+    assert.equal(eggFrame(tl, at('arrange').end).place, 1)
+    assert.equal(eggFrame(tl, at('orbit').start).orbit, 0)
+    assert.equal(eggFrame(tl, at('orbit').end).orbit, 1)
+    assert.equal(eggFrame(tl, at('finale').end).place, 1) // 余韻の最初は少し保つ
+    for (let k = 1; k < 6; k++) assert.ok(tl.nodeLit[k] > tl.nodeLit[k - 1], `記事 ${k}`)
+    assert.ok(tl.nodeLit[0] >= at('charge').start && tl.nodeLit[5] < at('charge').end)
+  })
+
+  test('小さな波紋: 1秒あたりに新しく出る数・同時に出ている数が上限以内。直径は 120px 以下', () => {
+    assert.ok(EGG_RIPPLE_PX * 2 <= 120)
+    for (const n of ALL) {
+      const r = eggTimeline(n, false).ripples
+      for (const x of r) {
+        assert.ok(r.filter((y) => y.t > x.t - 1000 && y.t <= x.t).length <= EGG_RIPPLE_MAX_PER_S, `${n}: 1秒あたり`)
+        assert.ok(r.filter((y) => y.t > x.t - EGG_RIPPLE_MS && y.t <= x.t).length <= EGG_RIPPLE_MAX_LIVE, `${n}: 同時`)
+      }
+      // 1つの記事で、1秒間に3回を超えて波紋が出ない
+      for (const x of r) assert.ok(r.filter((y) => y.node === x.node && y.t > x.t - 1000 && y.t <= x.t).length <= 3, `${n}: 記事 ${x.node}`)
+    }
+  })
+
+  test('3〜5件: 光が記事に届くたびに小さな波紋(戻り先に戻った瞬間は大きな波紋)', () => {
+    for (const n of [3, 4, 5]) {
+      const tl = eggTimeline(n, false)
+      assert.deepEqual(tl.ripples.map((r) => r.node), Array.from({ length: n - 1 }, (_, i) => i + 1))
+      assert.deepEqual(tl.bigRipple, { t: tl.finale, node: 0 })
+    }
+  })
+
+  test('6件以上: 波紋は溜めと1周目だけ(2周目以降は出さない)', () => {
+    const tl = eggTimeline(6, false)
+    const lapEnd = tl.light.start + (tl.light.end - tl.light.start) / tl.light.laps
+    for (const r of tl.ripples) assert.ok(r.t <= lapEnd + 1e-9, `${r.t}`)
+    assert.ok(tl.ripples.some((r) => r.t > tl.light.start))
+  })
+
+  test('大きな波紋・輪が揃って光る・走査線は、それぞれ演出の中で一度だけ(締めの瞬間)', () => {
+    for (const n of [3, 6, 9]) {
+      const tl = eggTimeline(n, false)
+      assert.equal(typeof tl.bigRipple.t, 'number')
+      assert.equal(tl.bigRipple.t, tl.finale)
+      assert.equal(tl.flash, tl.finale)
+      assert.equal(tl.scan, n >= 6 ? tl.finale : null)
+      // 締めの光は一度だけ山が来る(締めの瞬間に 1 になり、下がり続ける)
+      let prev = 0
+      let rises = 0
+      for (let t = 0; t <= tl.total; t += 5) {
+        const f = eggFrame(tl, t).flash
+        if (f > prev + 1e-9) rises++
+        prev = f
+      }
+      assert.equal(rises, 1, `${n}: 締めの光`)
+    }
+  })
+
+  test('文字の打ち込みは6件以上の締めから。3〜5件は左上の文字を出さない', () => {
+    assert.deepEqual(eggTimeline(6, false).typing, { start: eggTimeline(6, false).finale, charMs: 30 })
+    assert.equal(eggTimeline(3, false).typing, null)
+    assert.equal(eggTimeline(3, false).banner, null)
+  })
+
+  test('背景の円の波は3〜5件の締めだけ(6件以上はグリッドを薄くしているので使わない)', () => {
+    assert.equal(eggTimeline(4, false).gridWave, eggTimeline(4, false).finale)
+    assert.equal(eggTimeline(6, false).gridWave, null)
+  })
+
+  test('動きを減らす設定: 波紋・走査線・文字の打ち込み・締めの光・背景の波の予定が入らず、カメラワークと並べ替えもしない', () => {
+    for (const n of ALL) {
+      const tl = eggTimeline(n, true)
+      assert.equal(tl.cinematic, false)
+      assert.deepEqual(tl.ripples, [])
+      assert.equal(tl.bigRipple, null)
+      assert.equal(tl.flash, null)
+      assert.equal(tl.scan, null)
+      assert.equal(tl.typing, null)
+      assert.equal(tl.gridWave, null)
+      assert.equal(tl.arrange, null)
+      assert.equal(tl.light, null)
+      // 左上の文字は6件以上だけ、始まりから一度に出す
+      assert.equal(tl.banner, n >= 6 ? 0 : null)
+    }
   })
 })
 
 /**
  * 線 j の明るさの山の時刻(ms)。0.9 を超えたら山、0.8 を下回ったら次の山を数えられる(ヒステリシス)。
- * 明るいまま残る線(3〜5件)は、山が1回だけと数える
+ * 明るいまま残る線は、山が1回だけと数える
  */
-function peakTimes(plan, edges, j, stepMs = 5) {
+function peakTimes(tl, j, stepMs = 5) {
   const out = []
   let armed = true
-  for (let t = 0; t <= plan.lapMs; t += stepMs) {
-    const v = loopEdgeGlow((t / plan.lapMs) * edges * plan.laps, j, edges, plan.laps)
+  for (let t = 0; t <= tl.total; t += stepMs) {
+    const v = eggEdgeBrightness(eggFrame(tl, t), j, tl.length)
     if (armed && v > 0.9) {
       out.push(t)
       armed = false
@@ -254,35 +393,37 @@ function peakTimes(plan, edges, j, stepMs = 5) {
   return out
 }
 
-describe('光の明るさ(loopEdgeGlow)と点滅の安全', () => {
-  test('3〜5件: どの線も明るくなるのは1回だけで、明るいまま残る', () => {
-    const p = eggPlan(4, false)
-    for (let j = 0; j < 4; j++) {
-      assert.equal(loopEdgeGlow(0, j, 4, p.laps), 0)
-      assert.equal(loopEdgeGlow(4 * p.laps, j, 4, p.laps), 1)
-      assert.equal(peakTimes(p, 4, j).length, 1, `線 ${j}`)
+describe('光の明るさ(loopEdgeGlow・eggEdgeBrightness)と点滅の安全', () => {
+  test('3〜5件: 光が通った線は明るいまま残り、締めで揃って一度だけ最大になる', () => {
+    for (const n of [3, 4, 5]) {
+      const tl = eggTimeline(n, false)
+      for (let j = 0; j < n; j++) {
+        assert.equal(eggEdgeBrightness(eggFrame(tl, tl.light.start), j, n), 0, `線 ${j} 始まり`)
+        assert.equal(eggEdgeBrightness(eggFrame(tl, tl.finale), j, n), 1, `線 ${j} 締め`)
+        assert.equal(peakTimes(tl, j).length, 1, `線 ${j}`)
+      }
     }
   })
 
   test('光は 戻り先 → … → 今の中心 → 戻り先 の順に進む(番号の小さい線から先に明るくなる)', () => {
     for (const n of [3, 6, 9]) {
-      const p = eggPlan(n, false)
+      const tl = eggTimeline(n, false)
       const firstLit = []
       for (let j = 0; j < n; j++) {
         let t = 0
-        while (loopEdgeGlow((t / p.lapMs) * n * p.laps, j, n, p.laps) < 0.5) t += 5
+        while (eggEdgeBrightness(eggFrame(tl, t), j, n) < 0.5) t += 5
         firstLit.push(t)
       }
       for (let j = 1; j < n; j++) assert.ok(firstLit[j] > firstLit[j - 1], `${n}: 線 ${j}`)
     }
   })
 
-  test('6〜9件: どの線も、1秒間に3回を超えて明るさの山が来ない', () => {
-    for (const n of [6, 7, 8, 9]) {
-      const p = eggPlan(n, false)
+  test('どの線も、1秒間に3回を超えて明るさの山が来ない(6〜9件は光が何周か走る)', () => {
+    for (const n of [3, 5, 6, 7, 8, 9]) {
+      const tl = eggTimeline(n, false)
       for (let j = 0; j < n; j++) {
-        const peaks = peakTimes(p, n, j)
-        assert.ok(peaks.length >= 2, `${n}件 線 ${j}: 光が何周か走る`)
+        const peaks = peakTimes(tl, j)
+        if (n >= 6) assert.ok(peaks.length >= 2, `${n}件 線 ${j}: 光が何周か走る`)
         for (let k = 0; k < peaks.length; k++) {
           const within = peaks.filter((t) => t >= peaks[k] && t < peaks[k] + 1000).length
           assert.ok(within <= 3, `${n}件 線 ${j}: 1秒に ${within} 回`)
@@ -291,11 +432,10 @@ describe('光の明るさ(loopEdgeGlow)と点滅の安全', () => {
     }
   })
 
-  test('6〜9件: 山と山のあいだも暗くしすぎない(明暗の差を小さくする)', () => {
-    const p = eggPlan(6, false)
-    // 1周目を終えたあとは、どの線も底(EGG_CINE_BASE)より暗くならない
-    for (let head = 6; head <= 6 * p.laps; head += 0.05) {
-      for (let j = 0; j < 6; j++) assert.ok(loopEdgeGlow(head, j, 6, p.laps) >= 0.5, `head ${head} 線 ${j}`)
+  test('6〜9件: 1周目を終えたあとは、山と山のあいだも暗くしすぎない(明暗の差を小さくする)', () => {
+    const edges = 6
+    for (let head = 6; head <= 6 * 3; head += 0.05) {
+      for (let j = 0; j < edges; j++) assert.ok(loopEdgeGlow(head, j, edges, 3) >= 0.5, `head ${head} 線 ${j}`)
     }
   })
 })
@@ -344,7 +484,8 @@ describe('カメラワークの前に輪を並べ替える(10c)', () => {
     // ラベルの幅は、打ち切られた最長の記事名(16文字 + …)を JetBrains Mono 12px(1文字 約 0.6em)で見積もる
     const labelW = 17 * LABEL_PX * 0.6
     const labelH = 16
-    const opts = { pad: EGG_POLY_PAD_PX, maxPx: EGG_POLY_MAX_PX }
+    const belowPx = NODE_PX_CURRENT_MAX + LABEL_GAP_PX + labelH
+    const opts = { pad: EGG_POLY_PAD_PX, padTop: EGG_POLY_PAD_TOP_PX, padBottom: EGG_POLY_PAD_BOTTOM_PX, maxPx: EGG_POLY_MAX_PX, belowPx }
     const elev = (EGG_CINE_ELEV_DEG * Math.PI) / 180
     for (const [key, vp] of Object.entries(MEASURE_VIEWPORTS)) {
       for (const n of [6, 9]) {
@@ -368,7 +509,9 @@ describe('カメラワークの前に輪を並べ替える(10c)', () => {
             widest = Math.max(widest, Math.abs(sx - vp.width / 2))
             tallest = Math.max(tallest, Math.abs(sy - vp.height / 2))
             assert.ok(Math.abs(sx - vp.width / 2) + 16 + labelW <= vp.width / 2 - EGG_POLY_PAD_PX + 0.5, `${key} ${n}: 横 ${sx}`)
-            assert.ok(Math.abs(sy - vp.height / 2) + labelH / 2 <= vp.height / 2 - EGG_POLY_PAD_PX + 0.5, `${key} ${n}: 縦 ${sy}`)
+            // 上: 左上のステータス行の下 / 下: 真下に出るラベルがパンくずとズームボタンより上
+            assert.ok(sy - labelH / 2 >= EGG_POLY_PAD_TOP_PX - 0.5, `${key} ${n}: 上 ${sy}`)
+            assert.ok(sy + belowPx <= vp.height - EGG_POLY_PAD_BOTTOM_PX + 0.5, `${key} ${n}: 下 ${sy}`)
           }
         }
         // 必要以上に引いていない: 横か縦のどちらかが収まる限界まで広がっている。
@@ -376,7 +519,7 @@ describe('カメラワークの前に輪を並べ替える(10c)', () => {
         const focal = vp.height / 2 / Math.tan((CAMERA_FOV * Math.PI) / 360)
         const atLimit =
           widest + 16 + labelW >= vp.width / 2 - EGG_POLY_PAD_PX - 3 ||
-          tallest + labelH / 2 >= vp.height / 2 - EGG_POLY_PAD_PX - 3 ||
+          tallest + belowPx >= vp.height / 2 - EGG_POLY_PAD_BOTTOM_PX - 3 ||
           Math.abs((radius * focal) / D - EGG_POLY_MAX_PX) < 0.5
         assert.ok(atLimit, `${key} ${n}: 横 ${widest}px・縦 ${tallest}px`)
       }

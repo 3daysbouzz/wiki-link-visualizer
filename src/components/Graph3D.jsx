@@ -72,9 +72,23 @@ import {
   LABEL_SWAP_S,
   LABEL_SWAP_RISE_PX,
   EGG_EDGE_LIT,
+  EGG_NODE_UNLIT,
+  EGG_RIPPLE_MS,
+  EGG_RIPPLE_START_PX,
+  EGG_RIPPLE_PX,
+  EGG_RIPPLE_MAX_LIVE,
+  EGG_BIG_RIPPLE_MS,
+  EGG_BIG_RIPPLE_PX,
+  EGG_BIG_RIPPLE_PLANE_RATIO,
+  EGG_GRID_WAVE_STEP_MS,
+  EGG_GRID_WAVE_RING_MS,
+  EGG_GRID_WAVE_BOOST,
   EGG_CINE_ELEV_DEG,
   EGG_CINE_DIM,
   EGG_POLY_PAD_PX,
+  EGG_POLY_PAD_TOP_PX,
+  EGG_POLY_PAD_BOTTOM_PX,
+  LABEL_GAP_PX,
   EGG_POLY_MAX_PX,
   EGG_FIT_MAX_RATIO,
   EGG_FIT_PAD_PX,
@@ -90,8 +104,10 @@ import {
   eggColorFor,
 } from '../utils/relation.js'
 import {
-  eggPlan,
-  loopEdgeGlow,
+  eggTimeline,
+  eggFrame,
+  eggEdgeBrightness,
+  easeOut as eggEaseOut,
   rotateY,
   polygonVertices,
   snapshotLayout,
@@ -391,6 +407,38 @@ const Graph3D = forwardRef(function Graph3D(
       packets.push(sprite)
     }
 
+    // ---- 輪の演出の波紋(SPEC 6.11。タスク11) ----
+    // 小さな波紋(EGG_RIPPLE_MAX_LIVE 個まで同時に出る)と、3〜5件の締めの大きな波紋は、中空のリングのスプライト。
+    // 色は演出ごとに輪の色を入れる。ふだんは隠しておく
+    const ripples = []
+    for (let i = 0; i < EGG_RIPPLE_MAX_LIVE + 1; i++) {
+      const material = new THREE.SpriteMaterial({
+        map: ringTexture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        sizeAttenuation: false,
+        opacity: 0,
+      })
+      const sprite = new THREE.Sprite(material)
+      sprite.visible = false
+      sprite.renderOrder = 3
+      scene.add(sprite)
+      ripples.push(sprite)
+    }
+    // 6件以上の締めの大きな波紋: 輪の面(水平)の上に広がる平らな円(斜め上から見ると楕円になり、立体感が出る)。
+    // 半径 1 の円の線を作り、大きさは scale で変える
+    const planeRipplePoints = []
+    for (let i = 0; i < 128; i++) {
+      const a = (i / 128) * Math.PI * 2
+      planeRipplePoints.push(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)))
+    }
+    const planeRippleMaterial = new THREE.LineBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+    const planeRipple = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(planeRipplePoints), planeRippleMaterial)
+    planeRipple.visible = false
+    planeRipple.renderOrder = 3
+    scene.add(planeRipple)
+
     // ---- 背景グリッド(同心円 + 放射状ガイド線) ----
     // 起点に追従し、常にカメラに正対させる。インタラクション対象外で最奥に置く
     // (depthTest を切って先に描くので、他の何にも重ならない)
@@ -414,6 +462,8 @@ const Graph3D = forwardRef(function Graph3D(
         depthWrite: false,
       })
       material.userData.baseOpacity = material.opacity
+      // 内側から何番目の円か(輪の演出の締めで、内側から順に光らせる。タスク11)
+      material.userData.ring = i
       gridMaterials.push(material)
       const loop = new THREE.LineLoop(geometry, material)
       loop.renderOrder = -10
@@ -460,6 +510,8 @@ const Graph3D = forwardRef(function Graph3D(
       ring,
       ringMaterial,
       packets,
+      ripples,
+      planeRipple,
       // データパケットを流す経路(記事名の列)。App の packetRoutesFor が決める(SPEC 6.7)
       packetRoutes: [],
       grid,
@@ -812,6 +864,9 @@ const Graph3D = forwardRef(function Graph3D(
       }
       for (const tex of ctx.labelTextures.values()) tex.dispose()
       for (const p of packets) p.material.dispose()
+      for (const r of ripples) r.material.dispose()
+      planeRipple.geometry.dispose()
+      planeRippleMaterial.dispose()
       for (const m of gridMaterials) m.dispose()
       grid.traverse((obj) => {
         if (obj.geometry) obj.geometry.dispose()
@@ -960,6 +1015,18 @@ const Graph3D = forwardRef(function Graph3D(
       return startLoop(ctx, { route, length, onDone, allowMissing })
     },
 
+    /**
+     * 輪の演出を、始まりから ms の時点で止めて見る(デバッグ用。驚き・リズム・締め・余韻の瞬間を確かめる)。
+     * null で止めていた時点から再開する。操作(ドラッグ・ホイール・キー)で早送りすると、止めていても終わる
+     */
+    holdLoop(ms) {
+      const ctx = ctxRef.current
+      if (!ctx || !ctx.egg) return null
+      const e = ctx.egg
+      e.holdAt = ms === null || ms === undefined ? null : Math.min(Math.max(ms, 0), e.tl.total - 1)
+      return e.holdAt
+    },
+
     /** 輪の演出の状態(デバッグ用)。演出していなければ null */
     getLoopState() {
       const ctx = ctxRef.current
@@ -971,9 +1038,10 @@ const Graph3D = forwardRef(function Graph3D(
         color: '#' + e.color.getHexString(),
         reduced: e.reduced,
         cinematic: e.cinematic,
+        phase: (e.tl.phases.find((p) => performance.now() - e.start < p.end) || { name: 'end' }).name,
         arranged: !!e.orbit,
         elapsedMs: Math.round(performance.now() - e.start),
-        totalMs: e.inMs + e.lapMs + e.outMs,
+        totalMs: e.tl.total,
         missingEdges: e.missing.length,
         // 輪の外がどこまで薄くなっているか(球の不透明度・線の明るさの最大値)
         outside: outsideBrightness(ctx, e),
@@ -1488,10 +1556,10 @@ function applyHighlight(ctx) {
   const arrival = !hoveredId && ctx.arrival ? ctx.arrival : null
   const travelId = ctx.travel ? ctx.travel.id : null
   // 輪の演出(SPEC 6.11)。輪の外をホバーと同じ比率まで落とし、色の付いた輪を読みやすくする。
-  // 消える段階(releasing)では減光も一緒に戻す
-  const egg = ctx.egg && !ctx.egg.releasing ? ctx.egg : null
+  // 薄さは時間割(eggFrame の dim)で毎フレーム決まる(始まりから勢いよく薄くなり、余韻で戻る)
+  const egg = ctx.egg
   // 輪を並べ替えるカメラワーク(10c)では、輪以外をほぼ見えないところまで落とす(×0.3 では並べ替えで伸びた線が目立つため)
-  const eggDim = egg && egg.orbit ? EGG_CINE_DIM : HOVER_DIM_RATIO
+  const eggDim = egg ? 1 - (1 - (egg.orbit ? EGG_CINE_DIM : HOVER_DIM_RATIO)) * egg.dim : 1
 
   for (const node of ctx.nodes.values()) {
     const t = node.target
@@ -1643,7 +1711,11 @@ function updateVisuals(ctx, t, dt) {
     node.sprite.material.opacity = v.opacity
     // 球の色。ふだんは白。輪の演出中は輪の中心だけ輪の色へ寄せ、輪の候補は明るさだけを揺らす
     const color = node.sprite.material.color
-    if (egg && egg.nodes.has(node.id)) color.copy(WHITE).lerp(egg.color, egg.mix)
+    if (egg && egg.nodes.has(node.id)) {
+      // 6件以上の溜めでは、戻り先から順に灯る(灯る前は暗め)
+      const lit = egg.lit[egg.index.get(node.id)] ? 1 : EGG_NODE_UNLIT
+      color.copy(WHITE).lerp(egg.color, egg.mix).multiplyScalar(lit)
+    }
     else if (hintDim < 1 && ctx.loopHints.has(node.id)) color.setScalar(hintDim)
     else color.copy(WHITE)
 
@@ -1843,8 +1915,17 @@ function updateGrid(ctx, t) {
   // 輪を並べ替えている間(10c)は、グリッドも輪の外と同じ比率まで薄くする。グリッドは今の中心(多角形の頂点の1つに
   // 動く)を中心に描くので、そのままだと輪の形の上に同心円と放射線が重なって見えるため。色の付き具合と一緒に戻す
   const e = ctx.egg
-  const fade = e && e.orbit ? 1 - (1 - EGG_CINE_DIM) * e.mix : 1
-  for (const m of ctx.gridMaterials) m.opacity = m.userData.baseOpacity * fade
+  const fade = e && e.orbit ? 1 - (1 - EGG_CINE_DIM) * e.dim : 1
+  // 3〜5件の締め(タスク11): 背景の円を内側から順に一度だけ明るくして、波のように見せる
+  const waveAt = e && e.tl.gridWave !== null ? e.t - e.tl.gridWave : null
+  for (const m of ctx.gridMaterials) {
+    let wave = 0
+    if (waveAt !== null && m.userData.ring !== undefined) {
+      const x = (waveAt - m.userData.ring * EGG_GRID_WAVE_STEP_MS) / EGG_GRID_WAVE_RING_MS
+      if (x > 0 && x < 1) wave = EGG_GRID_WAVE_BOOST * Math.sin(Math.PI * x)
+    }
+    m.opacity = m.userData.baseOpacity * fade + wave
+  }
   // グリッドは背景レイヤーなので背景のドリフトに乗せる
   ctx.grid.position.set(
     current.x + ctx.driftBack.x,
@@ -2057,19 +2138,16 @@ function cancelArrival(ctx, { refresh = true } = {}) {
 }
 
 // ==========================================================================
-// 輪を閉じたときの演出 (SPEC 6.11。タスク10)
+// 輪を閉じたときの演出 (SPEC 6.11。タスク10・11)
 //
 // App が detectLoop(relation.js)で輪を見つけたら、戻る処理の前に playLoop で再生する。
 // 輪の線(経路の線と、今の中心 → 戻り先の子の線)は戻る処理で消えるので、先に見せる必要がある。
-// 時間割は eggPlan(src/utils/eggMotion.js)が決める。
-//   3〜5件(10a)
-//     IN  … 輪の線と中心の球を輪の色へ寄せ、輪の外を減光する。輪が画面に収まらなければ小さくカメラを引く
-//     LAP … 光が 戻り先 → … → 今の中心 → 戻り先 と一周する(線を順に明るくし、明るいまま残す)
-//     OUT … 色・明るさ・減光を通常に戻しながら消える
-//   6件以上(10b。動きを減らす設定では 3〜5件と同じ)
-//     IN    … 注視点を輪の重心へ移し、輪全体がどの向きからでも収まる距離まで引く
-//     ORBIT … 重心の周りを1周する。光は輪を EGG_CINE_LAPS 周走る
-//     OUT   … 色と明るさを戻す(カメラは止めたまま)
+// 時間割は eggTimeline、ある瞬間の見た目の量は eggFrame(src/utils/eggMotion.js)が決め、ここは描くだけにする。
+//   3〜5件(約2.3秒): 驚き(一瞬で色)→ リズム(光が一周し、記事に届くたびに小さな波紋)
+//                    → 締め(戻り先から大きな波紋・輪が揃って光る・背景の円の波)→ 余韻
+//   6件以上(約7秒。動きを減らす設定では 3〜5件と同じく光らせるだけ): 驚き → 並べ替え(10c)→ 溜め(順に灯る)
+//                    → 一周(光が3周。1周目だけ波紋)→ 締め(輪の面の大きな波紋・揃って光る・走査線・文字の打ち込み)→ 余韻(元に戻す)
+// 走査線と文字の打ち込みは DOM なので App が描く(演出の開始の知らせに時間割を渡す)。
 // 終わったら onDone(true) で App に知らせ、App が今までどおりの戻る処理を行う。
 // 戻る処理のカメラの移動(travelTo)で、演出の前の距離に戻す(restoreDistance)。
 // ドラッグ・ホイール・キー・ズームボタンの操作があれば、その時点で早送りして終える(finishLoop)。
@@ -2095,30 +2173,32 @@ function startLoop(ctx, { route, length, onDone, allowMissing }) {
   if (ctx.egg) endLoop(ctx, false)
   cancelArrival(ctx, { refresh: false })
 
-  const plan = eggPlan(length, ctx.reducedMotion)
+  const tl = eggTimeline(length, ctx.reducedMotion)
   // 演出の前の距離(演出が始まる前に利用者が手でズームしていれば、その距離)
   const distanceBefore = ctx.camera.position.distanceTo(ctx.controls.target)
   ctx.egg = {
     route,
     length,
+    tl,
     color: new THREE.Color(eggColorFor(length)),
     nodes: new Set(route),
+    // 記事 → 経路の中の番号(溜めで灯る順・波紋の位置)
+    index: new Map(route.map((id, k) => [id, k])),
     edgeIndex,
     // 線ごとの光の明るさ(0 〜 EGG_EDGE_LIT)。光が通るまでは 0 = 今の線の明るさのまま
     edgeBright: new Float32Array(route.length),
     missing,
     focus: focusForLoop(route),
     start: performance.now(),
-    inMs: plan.inMs,
-    lapMs: plan.lapMs,
-    outMs: plan.outMs,
-    laps: plan.laps,
-    reduced: plan.reduced,
-    cinematic: plan.cinematic,
+    // 始まってからの時間(ms)と、その時点の見た目の量(eggFrame)。updateLoop が毎フレーム決める
+    t: 0,
+    reduced: tl.reduced,
+    cinematic: tl.cinematic,
     distanceBefore,
-    // 色の付き具合(0 = 白、1 = 輪の色)
-    mix: 0,
-    releasing: false,
+    // 驚き: 始まりの瞬間に一瞬で色が付く(補間しない)
+    mix: 1,
+    dim: 0,
+    lit: tl.nodeLit.map((at) => (at <= 0 ? 1 : 0)),
     orbit: null,
     onDone,
   }
@@ -2131,12 +2211,12 @@ function startLoop(ctx, { route, length, onDone, allowMissing }) {
   ctx.edgeEgg.geometry = geometry
 
   // カメラワークなら輪を並べ替える準備を先にする(輪の外をどこまで薄くするかが、並べ替えるかで変わるため)
-  if (plan.cinematic) startOrbit(ctx, route)
-  // 輪の外の減光は IN と同じ時間で入れる
-  ctx.transitionS = ctx.reducedMotion ? 0 : plan.inMs / 1000
+  if (tl.cinematic) startOrbit(ctx, route)
+  // 輪の外の薄さは時間割で毎フレーム決めるので、補間は使わない(即時に目標へ)
+  ctx.transitionS = 0
   applyHighlight(ctx)
   updateLabelVisibility(ctx)
-  if (!plan.cinematic) fitLoopCamera(ctx, route)
+  if (!tl.cinematic) fitLoopCamera(ctx, route)
   notifyLoop(ctx, ctx.egg)
   return true
 }
@@ -2144,7 +2224,7 @@ function startLoop(ctx, { route, length, onDone, allowMissing }) {
 /** 演出の開始(egg)・終了(null)を App に知らせる */
 function notifyLoop(ctx, egg) {
   const handler = ctx.loopHandlerRef && ctx.loopHandlerRef.current
-  if (handler) handler(egg ? { length: egg.length, cinematic: egg.cinematic } : null)
+  if (handler) handler(egg ? { length: egg.length, cinematic: egg.cinematic, timeline: egg.tl } : null)
 }
 
 /**
@@ -2189,7 +2269,14 @@ function startOrbit(ctx, route) {
     el.clientHeight,
     labelW,
     labelH,
-    { pad: EGG_POLY_PAD_PX, maxPx: EGG_POLY_MAX_PX }
+    {
+      pad: EGG_POLY_PAD_PX,
+      padTop: EGG_POLY_PAD_TOP_PX,
+      padBottom: EGG_POLY_PAD_BOTTOM_PX,
+      maxPx: EGG_POLY_MAX_PX,
+      // 今の中心のラベルは球の真下: 球の半径(呼吸の最大)+ 間 + ラベルの高さ
+      belowPx: NODE_PX_CURRENT_MAX + LABEL_GAP_PX + labelH,
+    }
   )
   const elev = (EGG_CINE_ELEV_DEG * Math.PI) / 180
   const view = new THREE.Vector3(
@@ -2215,6 +2302,8 @@ function startOrbit(ctx, route) {
     startTarget: ctx.controls.target.clone(),
     centroid,
     view,
+    // 多角形の半径(締めの大きな波紋の大きさの基準)
+    radius,
   }
 }
 
@@ -2235,34 +2324,28 @@ function layoutSignature(ctx) {
 }
 
 /**
- * 毎フレーム: 輪の記事の位置とカメラを置く(10b・10c)。
- *   IN    … 輪の記事を多角形の頂点へ、カメラを見下ろす位置へ補間する
- *   ORBIT … 多角形のまま、カメラが重心の周りを縦軸で一周する(光と同じ +の向き。rotateY)
- *   OUT   … 輪の記事を記録した位置へ、カメラを演出の前の位置へ補間して戻す(最後は endLoop が補間なしで元どおりにする)
+ * 毎フレーム: 輪の記事の位置とカメラを置く(10b・10c)。進み具合は時間割(eggFrame の place・orbit)で決まる。
+ *   並べ替え … 輪の記事を多角形の頂点へ、カメラを見下ろす位置へ(place が 0 → 1)
+ *   一周     … 多角形のまま、カメラが重心の周りを縦軸で一周する(光と同じ +の向き。rotateY)
+ *   余韻     … 輪の記事を記録した位置へ、カメラを演出の前の位置へ戻す(place が 1 → 0。最後は endLoop が補間なしで元どおりにする)
  */
-function updateOrbit(ctx, elapsed) {
-  const e = ctx.egg
-  const o = e.orbit
+function updateOrbit(ctx, frame) {
+  const o = ctx.egg.orbit
   if (!o) return
-  let place // 0 = 記録した位置、1 = 多角形
-  if (elapsed < e.inMs) {
-    const p = easeInOut(elapsed / e.inMs)
-    place = p
-    _v1.copy(o.centroid).add(o.view)
-    ctx.camera.position.lerpVectors(o.startPosition, _v1, p)
-    ctx.controls.target.lerpVectors(o.startTarget, o.centroid, p)
-  } else if (elapsed < e.inMs + e.lapMs) {
-    place = 1
-    const angle = easeInOut((elapsed - e.inMs) / e.lapMs) * Math.PI * 2
-    const v = rotateY(o.view, angle)
+  const place = frame.place
+  _v1.copy(o.centroid).add(o.view)
+  if (frame.orbit <= 0) {
+    // 並べ替え(まだ一周を始めていない)
+    ctx.camera.position.lerpVectors(o.startPosition, _v1, place)
+    ctx.controls.target.lerpVectors(o.startTarget, o.centroid, place)
+  } else if (place >= 1) {
+    const v = rotateY(o.view, frame.orbit * Math.PI * 2)
     ctx.camera.position.set(o.centroid.x + v.x, o.centroid.y + v.y, o.centroid.z + v.z)
     ctx.controls.target.copy(o.centroid)
   } else {
-    const p = easeInOut(Math.min((elapsed - e.inMs - e.lapMs) / e.outMs, 1))
-    place = 1 - p
-    _v1.copy(o.centroid).add(o.view)
-    ctx.camera.position.lerpVectors(_v1, o.startPosition, p)
-    ctx.controls.target.lerpVectors(o.centroid, o.startTarget, p)
+    // 余韻: 一周を終えた位置(= 見下ろす位置)から、演出の前の位置へ
+    ctx.camera.position.lerpVectors(o.startPosition, _v1, place)
+    ctx.controls.target.lerpVectors(o.startTarget, o.centroid, place)
   }
   for (let i = 0; i < o.members.length; i++) {
     const n = o.members[i]
@@ -2274,39 +2357,89 @@ function updateOrbit(ctx, elapsed) {
   }
 }
 
-/** 毎フレーム: 色の付き具合と、光が輪を回る進み具合を決める。時間が来たら終える */
+/** 毎フレーム: 時間割どおりに見た目の量を決める。時間が来たら終える */
 function updateLoop(ctx, now) {
   const e = ctx.egg
-  if (!e) return
-  const elapsed = now - e.start
-  const edges = e.edgeBright.length
-  let head
-  if (elapsed < e.inMs) {
-    e.mix = smoothstep(elapsed / e.inMs)
-    head = 0
-  } else if (elapsed < e.inMs + e.lapMs) {
-    e.mix = 1
-    head = ((elapsed - e.inMs) / e.lapMs) * edges * e.laps
-  } else if (elapsed < e.inMs + e.lapMs + e.outMs) {
-    if (!e.releasing) {
-      // 消える段階: 輪の外の減光も同じ時間で戻す
-      e.releasing = true
-      ctx.transitionS = ctx.reducedMotion ? 0 : e.outMs / 1000
-      applyHighlight(ctx)
-    }
-    e.mix = 1 - smoothstep((elapsed - e.inMs - e.lapMs) / e.outMs)
-    head = edges * e.laps
-  } else {
+  if (!e) {
+    hideRipples(ctx)
+    return
+  }
+  // 止めて見ている間(window.__viz.eggAt。デバッグ用)は、その時点のまま進めない
+  if (e.holdAt !== null && e.holdAt !== undefined) e.start = now - e.holdAt
+  const t = now - e.start
+  if (t >= e.tl.total) {
     endLoop(ctx, true)
     return
   }
-  if (e.cinematic) updateOrbit(ctx, elapsed)
-  // 動きを減らす設定では、光を走らせず全部の線を色と一緒に明るくする
-  if (e.reduced) head = edges
-  for (let j = 0; j < edges; j++) {
-    // 光の明るさの決め方は eggMotion.js(点滅の回数をテストで検査している)
-    e.edgeBright[j] = loopEdgeGlow(head, j, edges, e.laps) * EGG_EDGE_LIT * e.mix
+  const frame = eggFrame(e.tl, t)
+  e.t = t
+  e.mix = frame.mix
+  e.dim = frame.dim
+  e.lit = frame.lit
+  const edges = e.edgeBright.length
+  for (let j = 0; j < edges; j++) e.edgeBright[j] = eggEdgeBrightness(frame, j, edges) * EGG_EDGE_LIT
+  // 輪の外の薄さは毎フレーム変わるので、目標を決め直す(補間なしで即時に反映される)
+  applyHighlight(ctx)
+  if (e.cinematic) updateOrbit(ctx, frame)
+  updateRipples(ctx, e, t)
+}
+
+/**
+ * 波紋を描く(タスク11)。
+ *   小さな波紋 … 時間割の ripples。輪の記事の位置から、半径 EGG_RIPPLE_START_PX → EGG_RIPPLE_PX へ勢いよく広がりながら消える
+ *   大きな波紋 … 3〜5件は戻り先から画面上で EGG_BIG_RIPPLE_PX まで。6件以上は輪の面の上に、重心から平らな円で広がる
+ * どちらも輪の色。大きさは画面上の px で決める(小さな波紋は直径 120px 以下)
+ */
+function updateRipples(ctx, e, t) {
+  const ratio = ctx.ringTexture.userData.circleRatio || 1
+  let used = 0
+  for (const r of e.tl.ripples) {
+    const p = (t - r.t) / EGG_RIPPLE_MS
+    if (p < 0 || p >= 1 || used >= ctx.ripples.length - 1) continue
+    const node = ctx.nodes.get(e.route[r.node])
+    if (!node) continue
+    const sprite = ctx.ripples[used++]
+    const px = EGG_RIPPLE_START_PX + (EGG_RIPPLE_PX - EGG_RIPPLE_START_PX) * eggEaseOut(p)
+    const size = spriteScaleFromPx(ctx, (px * 2) / ratio)
+    sprite.position.copy(displayPosition(ctx, node, _v1))
+    sprite.scale.set(size, size, 1)
+    sprite.material.color.copy(e.color)
+    sprite.material.opacity = (1 - p) * e.mix
+    sprite.visible = true
   }
+  // 最後の1つは 3〜5件の大きな波紋に使う
+  const big = ctx.ripples[ctx.ripples.length - 1]
+  for (let i = used; i < ctx.ripples.length - 1; i++) ctx.ripples[i].visible = false
+  big.visible = false
+  ctx.planeRipple.visible = false
+  const b = e.tl.bigRipple
+  if (!b) return
+  const p = (t - b.t) / EGG_BIG_RIPPLE_MS
+  if (p < 0 || p >= 1) return
+  if (b.node !== null) {
+    const node = ctx.nodes.get(e.route[b.node])
+    if (!node) return
+    const px = EGG_RIPPLE_START_PX + (EGG_BIG_RIPPLE_PX - EGG_RIPPLE_START_PX) * eggEaseOut(p)
+    const size = spriteScaleFromPx(ctx, (px * 2) / ratio)
+    big.position.copy(displayPosition(ctx, node, _v1))
+    big.scale.set(size, size, 1)
+    big.material.color.copy(e.color)
+    big.material.opacity = 1 - p
+    big.visible = true
+  } else if (e.orbit) {
+    const o = e.orbit
+    const r = o.radius * (0.2 + (EGG_BIG_RIPPLE_PLANE_RATIO - 0.2) * eggEaseOut(p))
+    ctx.planeRipple.position.copy(o.centroid).add(ctx.driftFront)
+    ctx.planeRipple.scale.set(r, 1, r)
+    ctx.planeRipple.material.color.copy(e.color)
+    ctx.planeRipple.material.opacity = 1 - p
+    ctx.planeRipple.visible = true
+  }
+}
+
+function hideRipples(ctx) {
+  for (const r of ctx.ripples) r.visible = false
+  ctx.planeRipple.visible = false
 }
 
 /**

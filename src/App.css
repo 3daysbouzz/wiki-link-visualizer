@@ -81,6 +81,28 @@ a:hover {
 }
 
 /* スキャンライン(装飾)。全面に重ねるが操作は透過させる */
+/* 輪の演出の走査線(6件以上の締めで一度だけ。SPEC 6.11)。白い 1px の横線が画面を上から下へ通り過ぎる。
+   グラデーションは使わない(Wireframe Terminal の決まり)。長さは constants.js の EGG_SCAN_MS をインラインの変数で受け取る */
+.egg-scan {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: #fff;
+  pointer-events: none;
+  z-index: 101;
+  animation: egg-scan var(--egg-scan-ms) linear forwards;
+}
+@keyframes egg-scan {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100vh);
+  }
+}
+
 .scanlines {
   position: fixed;
   inset: 0;
