@@ -30,7 +30,7 @@ Wikipedia記事間のリンクを3Dグラフで可視化するWebアプリ。個
 に集約されている。力学レイアウト・ラベル・カメラ・クリック判定はすべて自前実装。
 
 **依存パッケージを増やすときは、先に理由を提示して確認を取る。**
-現在の依存は `react` / `react-dom` / `three` と、デバッグパネル用の `leva`(ユーザー指示で追加)。
+現在の依存は `react` / `react-dom` / `three` と、デバッグパネル用の `leva`(ユーザー指示で追加。devDependencies)。
 この「依存を最小限に保つ」方針自体が上記の不具合への対応策になっている。
 
 **レイアウト・抽選に `Math.random` を使わない。** 種付き乱数(`src/utils/prng.js`)を使う。
@@ -75,7 +75,7 @@ src/
     ├── Sidebar.jsx           右サイドバー(記事名・メタ・抜粋・隣接記事)
     ├── Breadcrumb.jsx        左下の履歴パンくず
     ├── ZoomControls.jsx      右下のズーム +/−
-    └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける
+    └── DebugPanel.jsx        leva パネル(?debug=1)。layout / visual / ranking / relation のフォルダに分ける。開発サーバーだけで読み込む
 scripts/                      開発用の Node スクリプト。fetch-long-walks.mjs(長い経路の展開結果を一度だけ取って tests/fixtures に保存)・
                               count-long-walk-loops.mjs(保存した経路で輪の起きやすさを数える。docs/tasks/11-report-loops.md)
 tests/                        node:test のユニットテスト(API のエラー処理・関連スコア・抽選・追加表示・全通信の同時リクエスト数の行列・閲覧数の行列・深さフェード・URL 読み取り・関連の強さ・切り出した計算の回帰・配置の回帰・画面上の見え方の測定・輪の演出)
@@ -177,6 +177,11 @@ API仕様・UI仕様・定数の意味は `SPEC.md` にある。
 **実装を変えたら `SPEC.md` も更新する。**
 
 ## デバッグ
+
+**`?debug=1`(デバッグパネル・`window.__viz`・スコアの内訳の表・`[egg]` ログ)は開発サーバー(`npm run dev`)だけで効く。**
+公開用のビルド(`npm run build` / `preview`)では無視する(Wikipedia への問い合わせを大量に送れてしまうため。SPEC 12.3)。
+デバッグ用の道具を足すときは `import.meta.env.DEV` で囲み、公開用のビルドに入らないことを確かめる
+(`dist/assets` に `measure` や `leva` が出ないこと)。
 
 **画面がおかしいときは、まずブラウザのConsoleを見ること。**
 過去の不具合は画面上は無言で真っ暗になる一方、Consoleには明確なエラーが

@@ -105,7 +105,7 @@ http://localhost:5173/?preset=mesh&nodeLimit=64&start=初音ミク&path=MEIKO,KA
 | `labelDepthFade=` `fadeStart=` `fadeEnd=` | 奥のラベルを薄くするか(1/0)と、薄くし始める・消える深さ |
 | `distanceByScore=` `trailTiered=` `sharedPackets=` `arrivalShared=` | 関連の強さで距離を変える・訪れた記事同士の距離を段階で決める・共通の関連ワードに点を流す・進んだ直後に共通の関連ワードを見せる(1/0)。数値の項目は SPEC 12.2 |
 | `start=記事名&path=記事,記事` | 開始記事と辿った経路。歩くと自動で URL に書かれる |
-| `debug=1` | 右上にデバッグパネル(設定をその場で変更)を出す。Console にスコアの内訳の表も出る |
+| `debug=1` | 右上にデバッグパネル(設定をその場で変更)を出す。Console にスコアの内訳の表も出る。**開発サーバー(`npm run dev`)だけで効く**。公開版では無視する |
 
 同じ経路・同じ設定なら、開き直しても同じ配置になります。
 2つのタブで別プリセットを開いて並べると比較できます。
@@ -166,7 +166,7 @@ npm run preview
   関連度は検索エンジンの `morelike:` に相互リンク・冒頭リンク(`action=parse`)の加点を足し、閲覧数は Wikimedia REST API
   (`wikimedia.org/api/rest_v1/metrics/pageviews`) から表示分だけ取得
 
-依存パッケージは `react` / `react-dom` / `three` と、デバッグパネル用の `leva` だけです。
+依存パッケージは `react` / `react-dom` / `three` と、デバッグパネル用の `leva`(開発時だけ。公開用のビルドには入らない)だけです。
 
 ## なぜ react-force-graph-3d を使っていないのか
 

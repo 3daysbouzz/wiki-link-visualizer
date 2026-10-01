@@ -1,10 +1,9 @@
-import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
+import React, { useRef, useState, useCallback, useEffect, useMemo, lazy, Suspense } from 'react'
 import Graph3D from './components/Graph3D.jsx'
 import TopBar from './components/TopBar.jsx'
 import Sidebar from './components/Sidebar.jsx'
 import Breadcrumb from './components/Breadcrumb.jsx'
 import ZoomControls from './components/ZoomControls.jsx'
-import DebugPanel from './components/DebugPanel.jsx'
 import {
   fetchLinkedArticles,
   expandRoute,
@@ -48,8 +47,13 @@ import {
   EGG_SCAN_MS,
 } from './constants.js'
 
-// URL は起動時に一度だけ読む(経路の復元と設定の初期値に使う)
-const initialUrlState = readUrlState()
+// URL は起動時に一度だけ読む(経路の復元と設定の初期値に使う)。
+// ?debug=1 は開発サーバー(npm run dev)だけで効く。公開版では無視する(readUrlState)
+const initialUrlState = readUrlState(window.location.search, import.meta.env.DEV)
+
+// デバッグパネル(leva)は開発サーバーだけで読み込む。
+// import.meta.env.DEV は本番ビルドで false に置き換わるので、パネルと leva は公開用のビルドに入らない
+const DebugPanel = import.meta.env.DEV ? lazy(() => import('./components/DebugPanel.jsx')) : null
 // ?debug=1&maxConcurrent=N(計測用)。最初の通信より前に反映する。本番ビルドでは既定の上限より上げない
 const maxConcurrent = effectiveMaxConcurrent(initialUrlState.maxConcurrent, import.meta.env.DEV)
 if (maxConcurrent) setMaxConcurrentRequests(maxConcurrent)
@@ -570,7 +574,8 @@ export default function App() {
 
     // ?debug=1 のとき、配置の照合用に座標を取れるようにしておく
     // (Console で JSON.stringify(window.__viz.positions()) を2つのタブで見比べる)
-    if (initialUrlState.debug) {
+    // import.meta.env.DEV を直接書くのは、本番ビルドでこのブロックごと(measure.js の読み込みも)消すため
+    if (import.meta.env.DEV && initialUrlState.debug) {
       // measure() で読み込んだモジュール(measureMarkdown を同期で返すために持っておく)
       let measureModule = null
       window.__viz = {
@@ -970,13 +975,15 @@ export default function App() {
       {/* スキャンライン(装飾)。操作を邪魔しないよう pointer-events は切る */}
       <div className="scanlines" aria-hidden="true" />
 
-      {initialUrlState.debug && (
-        <DebugPanel
-          presetName={presetName}
-          config={config}
-          onChange={handleConfigChange}
-          onPreset={handlePresetChange}
-        />
+      {DebugPanel && initialUrlState.debug && (
+        <Suspense fallback={null}>
+          <DebugPanel
+            presetName={presetName}
+            config={config}
+            onChange={handleConfigChange}
+            onPreset={handlePresetChange}
+          />
+        </Suspense>
       )}
     </div>
   )

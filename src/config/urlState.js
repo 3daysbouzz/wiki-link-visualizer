@@ -7,7 +7,7 @@
  *   ?moreBatch=4&moreMax=20        … 追加表示の件数も同じ(6.8)
  *   ?labelDepthFade=0&fadeEnd=160  … ラベルの深さフェードも同じ(6.3)
  *   ?start=流体力学&path=マグネシウム,ウラン … 探索経路(開始記事と、そこから辿った記事)
- *   ?debug=1                       … デバッグパネルを出す
+ *   ?debug=1                       … デバッグパネルと window.__viz を出す(開発サーバーだけ。本番ビルドでは無視する)
  *   ?debug=1&maxConcurrent=5       … 同時リクエスト数の上限を変える(計測用。debug のときだけ効く。
  *                                    本番ビルドでは 3 より上げられない。effectiveMaxConcurrent)
  *
@@ -55,8 +55,17 @@ export function effectiveMaxConcurrent(requested, isDev) {
   return isDev ? requested : Math.min(requested, MAX_CONCURRENT_REQUESTS)
 }
 
-/** URL から { presetName, config, overrides, start, path, debug, maxConcurrent } を読む */
-export function readUrlState(search = window.location.search) {
+/**
+ * URL から { presetName, config, overrides, start, path, debug, maxConcurrent } を読む。
+ *
+ * debug は開発サーバー(allowDebug = import.meta.env.DEV)のときだけ読む。
+ * デバッグモードの measure() や leva の表示件数の変更は、Wikipedia への問い合わせを大量に送れるので、
+ * 公開版では ?debug=1 を付けても何も起きないようにする(import.meta.env は Node のテストに無いので引数で受け取る)
+ *
+ * @param {string} [search]
+ * @param {boolean} [allowDebug] import.meta.env.DEV
+ */
+export function readUrlState(search = window.location.search, allowDebug = false) {
   const params = new URLSearchParams(search)
 
   let presetName = params.get('preset') || DEFAULT_PRESET
@@ -77,7 +86,7 @@ export function readUrlState(search = window.location.search) {
     .map((s) => s.trim())
     .filter(Boolean)
 
-  const debug = params.get('debug') === '1'
+  const debug = allowDebug && params.get('debug') === '1'
 
   // 同時リクエスト数の上書きは計測用なので、debug のときだけ読む(公開版の URL では効かない)
   let maxConcurrent = null

@@ -81,8 +81,14 @@ describe('readUrlState', () => {
   })
 
   test('debug=1 のときだけ debug が true', () => {
-    assert.equal(readUrlState('?debug=1').debug, true)
-    assert.equal(readUrlState('?debug=true').debug, false)
+    assert.equal(readUrlState('?debug=1', true).debug, true)
+    assert.equal(readUrlState('?debug=true', true).debug, false)
+  })
+
+  test('本番ビルド(allowDebug なし)では debug=1 を無視する', () => {
+    assert.equal(readUrlState('?debug=1').debug, false)
+    assert.equal(readUrlState('?debug=1', false).debug, false)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=8', false).maxConcurrent, null)
   })
 })
 
@@ -287,17 +293,17 @@ describe('URL クエリでの力学パラメータの上書き', () => {
 
 describe('readUrlState: maxConcurrent(計測用の同時リクエスト数)', () => {
   test('debug のときだけ読む', () => {
-    assert.equal(readUrlState('?debug=1&maxConcurrent=8').maxConcurrent, 8)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=8', true).maxConcurrent, 8)
     assert.equal(readUrlState('?maxConcurrent=8').maxConcurrent, null)
-    assert.equal(readUrlState('?debug=1').maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1', true).maxConcurrent, null)
   })
 
   test('範囲外・整数でない値は無視する', () => {
     console.warn = () => {}
-    assert.equal(readUrlState('?debug=1&maxConcurrent=0').maxConcurrent, null)
-    assert.equal(readUrlState('?debug=1&maxConcurrent=99').maxConcurrent, null)
-    assert.equal(readUrlState('?debug=1&maxConcurrent=2.5').maxConcurrent, null)
-    assert.equal(readUrlState('?debug=1&maxConcurrent=abc').maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=0', true).maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=99', true).maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=2.5', true).maxConcurrent, null)
+    assert.equal(readUrlState('?debug=1&maxConcurrent=abc', true).maxConcurrent, null)
   })
 })
 
